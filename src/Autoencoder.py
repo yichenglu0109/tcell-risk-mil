@@ -222,8 +222,8 @@ def evaluate_autoencoder(model, test_loader, adata, tf_names, save_path='results
     all_reconstructions = []
     
     with torch.no_grad():
-        for data, _ in test_loader:
-            data = data.to(device)
+        for batch in test_loader:
+            data = _get_x_from_batch(batch).to(device)
             outputs = model(data)
             loss = criterion(outputs, data)
             test_loss += loss.item()
@@ -296,11 +296,11 @@ def evaluate_autoencoder(model, test_loader, adata, tf_names, save_path='results
         fig.savefig(f'{save_path}/latent_umap_by_patient.png', bbox_inches='tight')
         plt.close(fig)
     
-    if 'Response_3m' in adata_latent.obs.columns:
-        fig = sc.pl.umap(adata_latent, color=['Response_3m'], show=False, return_fig=True)
-        os.makedirs(save_path, exist_ok=True)
-        fig.savefig(f'{save_path}/latent_umap_by_response.png', bbox_inches='tight')
-        plt.close(fig)
+    # if 'Response_3m' in adata_latent.obs.columns:
+    #     fig = sc.pl.umap(adata_latent, color=['Response_3m'], show=False, return_fig=True)
+    #     os.makedirs(save_path, exist_ok=True)
+    #     fig.savefig(f'{save_path}/latent_umap_by_response.png', bbox_inches='tight')
+    #     plt.close(fig)
     
     
     # Save latent representation for MIL
