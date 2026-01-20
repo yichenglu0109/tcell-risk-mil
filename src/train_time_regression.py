@@ -1,9 +1,11 @@
 import os
 import argparse
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import pickle
 from torch.utils.data import DataLoader
 
 import scanpy as sc
@@ -106,18 +108,21 @@ def train_one_fold(
     patience=10,
     use_sample_source=True,
     seed=1,
+    patient_col="patient_id",
+    time_col="time_to_relapse",
+    sample_source_col="Sample_source",
 ):
     torch.manual_seed(seed)
     np.random.seed(seed)
 
     train_ds = PatientBagDataset(
         train_adata,
-        patient_col="patient_id",
+        patient_col=patient_col,
         task_type="regression",
-        label_col="time_to_relapse",
+        label_col=time_col,
         drop_missing=True,
         use_sample_source=use_sample_source,
-        sample_source_col="Sample_source",
+        sample_source_col=sample_source_col,
     )
     train_loader = DataLoader(train_ds, batch_size=1, shuffle=True)
 
@@ -180,19 +185,21 @@ def train_one_fold(
 
 
 @torch.no_grad()
-def predict_one_patient(model, test_adata, device, use_sample_source=True):
+def predict_one_patient(model, test_adata, device, use_sample_source=True, return_attention=True, 
+                        patient_col="patient_id", time_col="time_to_relapse", sample_source_col="Sample_source"):
     test_ds = PatientBagDataset(
         test_adata,
-        patient_col="patient_id",
+        patient_col=patient_col,
         task_type="regression",
-        label_col="time_to_relapse",
+        label_col=time_col,
         drop_missing=True,
         use_sample_source=use_sample_source,
-        sample_source_col="Sample_source",
+        sample_source_col=sample_source_col,
     )
     test_loader = DataLoader(test_ds, batch_size=1, shuffle=False)
 
     model.eval()
+
     for batch in test_loader:
         if len(batch) == 4:
             bag, label, patient, one_hot = batch
@@ -204,13 +211,24 @@ def predict_one_patient(model, test_adata, device, use_sample_source=True):
         bag = bag.to(device)
         y = float(label.item())
 
-        out = model([bag], sample_source=one_hot.unsqueeze(0) if one_hot is not None else None)
+        # MIL forward expects list of bags
+        out = model(
+            [bag],
+            sample_source=one_hot.unsqueeze(0) if one_hot is not None else None,
+            return_attention=return_attention
+        )
         pred = float(out["risk"].squeeze(0).item())
 
-        return patient[0] if isinstance(patient, (list, tuple)) else str(patient), y, pred
+        attn = None
+        if return_attention:
+            # out["attn"] is a list length B; each element is [num_instances, 1]
+            # Here B=1
+            attn = out["attn"][0].detach().cpu().numpy()
+
+        pid = patient[0] if isinstance(patient, (list, tuple)) else str(patient)
+        return pid, y, pred, attn
 
     raise RuntimeError("Empty test_loader (unexpected).")
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -264,6 +282,13 @@ def main():
     print(f"[INFO] input_dim (latent_dim): {input_dim}")
     print(f"[INFO] use_sample_source: {args.use_sample_source} | sample_source_dim: {sample_source_dim}")
 
+    cv_results = {
+        "fold_metrics": [],
+        "patient_predictions": {},
+        "attention_weights": {},
+        "overall_metrics": {}
+    }
+
     # LOOCV over relapse patients
     patients = np.array(sorted(set(adata_r.obs[args.patient_col].astype(str).tolist())))
     y_true = []
@@ -289,12 +314,45 @@ def main():
             patience=args.patience,
             use_sample_source=args.use_sample_source,
             seed=args.seed,
+            patient_col=args.patient_col,
+            time_col=args.time_col,
+            sample_source_col="Sample_source",
         )
 
-        pid, yt, yp = predict_one_patient(model, test_adata, device, use_sample_source=args.use_sample_source)
+        pid, yt, yp, attn = predict_one_patient(
+            model,
+            test_adata,
+            device,
+            use_sample_source=args.use_sample_source,
+            return_attention=True
+        )
+
         y_true.append(yt)
         y_pred.append(yp)
         pid_list.append(pid)
+
+        # store patient-level prediction (like train.py)
+        cv_results["patient_predictions"][pid] = {
+            "true_time": float(yt),
+            "pred_time": float(yp),
+            "abs_error": float(abs(yp - yt)),
+            "sq_error": float((yp - yt) ** 2),
+        }
+
+        # store attention weights (optional but keeps parity with train.py)
+        if attn is not None:
+            cv_results["attention_weights"][pid] = attn  # numpy array [n_cells, 1]
+
+        # fold_metrics (one patient = one fold in LOOCV)
+        cv_results["fold_metrics"].append({
+            "fold": int(i - 1) if isinstance(i, int) else int(i),
+            "patient_id": pid,
+            "true_time": float(yt),
+            "pred_time": float(yp),
+            "abs_error": float(abs(yp - yt)),
+            "sq_error": float((yp - yt) ** 2),
+        })
+
 
     y_true = np.array(y_true, dtype=float)
     y_pred = np.array(y_pred, dtype=float)
@@ -307,6 +365,20 @@ def main():
     print(f"MAE (days):  {mae:.3f}")
     print(f"RMSE (days): {rmse:.3f}")
     print(f"Spearman:    {spr:.3f}")
+
+    cv_results["overall_metrics"] = {
+        "mae_days": float(mae),
+        "rmse_days": float(rmse),
+        "spearman": float(spr),
+        "n_patients": int(len(pid_list)),
+        "use_sample_source": bool(args.use_sample_source),
+    }
+
+    # Save pkl (same style as train.py)
+    out_pkl = os.path.join(args.outdir, "loocv_results.pkl")
+    with open(out_pkl, "wb") as f:
+        pickle.dump(cv_results, f)
+    print(f"[INFO] saved: {out_pkl}")
 
     # Save predictions
     out_csv = os.path.join(args.outdir, "predictions.csv")
