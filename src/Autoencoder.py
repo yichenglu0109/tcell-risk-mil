@@ -258,11 +258,22 @@ def evaluate_autoencoder(model, test_loader, adata, tf_names, save_path='results
     if isinstance(all_cells, np.ndarray) == False:
         all_cells = all_cells.toarray()
     
-    all_cells_tensor = torch.FloatTensor(all_cells).to(device)
-    
+    all_cells = adata.X
+    if not isinstance(all_cells, np.ndarray):
+        all_cells = all_cells.toarray()
+
+    BATCH = 4096
+    latent_chunks = []
+
+    model.eval()
     with torch.no_grad():
-        latent_vectors = model.encode(all_cells_tensor).cpu().numpy()
-    
+        for i in range(0, all_cells.shape[0], BATCH):
+            x = torch.from_numpy(all_cells[i:i+BATCH]).float().to(device)
+            z = model.encode(x).cpu().numpy()
+            latent_chunks.append(z)
+
+    latent_vectors = np.vstack(latent_chunks)
+
     # Create a new AnnData object with latent representations
     adata_latent = sc.AnnData(latent_vectors)
     adata_latent.obs = adata.obs.copy()  # Copy cell annotations
