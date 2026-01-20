@@ -9,3 +9,4 @@ results/
 runs/
 .env
 .venv/
+sanity_*.py
