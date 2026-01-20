@@ -1,5 +1,5 @@
-# tcellMIL Framework
-
+# tcellMIL_reg Framework
+This repository is adapted from tcellMIL with additional multitask + time regression extensions
 A computational framework for CAR T cell therapy response prediction using Multiple Instance Learning (MIL) on single-cell regulatory network data.
 
 ## Overview
