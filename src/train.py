@@ -17,7 +17,7 @@ from src.MIL import AttentionMIL
 # define a leave one out cross validation function
 def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=128, sample_source_dim=4,
                                   num_epochs=50, learning_rate=5e-4, weight_decay = 1e-2, 
-                                  save_path='results'):
+                                  save_path='results', label_col="Response_3m", pos_label="R", neg_label="NR",):
     """
     Perform leave-one-out cross-validation for the MIL model
     # Parameters:
@@ -99,10 +99,15 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
         # train model
         model = AttentionMIL(input_dim, num_classes, hidden_dim, sample_source_dim).to(device)
 
-        # use weight classes to address class imbalance
-        y = adata.obs.Response_3m.to_numpy()
-        y = np.where(y == "NR", 0,1)
-    
+        # use class weights to address imbalance (compute from TRAIN fold only)
+        y_raw = train_dataset.adata.obs[label_col].to_numpy()
+
+        bad = set(np.unique(y_raw)) - {neg_label, pos_label}
+        if len(bad) > 0:
+            raise ValueError(f"Unexpected labels in {label_col}: {bad}. Expected only {neg_label}/{pos_label}.")
+
+        y = np.where(y_raw == neg_label, 0, 1)
+
         class_weights = compute_class_weight(class_weight="balanced", classes=np.unique(y), y=y)
         class_weights = torch.FloatTensor(class_weights).to(device)
         
@@ -145,7 +150,8 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
                 one_hot_sample_source = one_hot_sample_source.to(device)
 
                 # Forward pass
-                logits = model(bags, one_hot_sample_source)
+                out = model(bags, sample_source=one_hot_sample_source)
+                logits = out["logits"]
                 loss = criterion(logits, batch_labels)
 
                 # Backward pass and optimization
@@ -215,7 +221,9 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
                 one_hot_sample_source = one_hot_sample_source.to(device)
 
                 # Forward pass
-                logits, attn_weights = model(bags, one_hot_sample_source, return_attention=True)
+                out = model(bags, sample_source=one_hot_sample_source, return_attention=True)
+                logits = out["logits"]
+                attn_weights = out["attn"]                
 
                 # get predictions
                 probs = F.softmax(logits, dim=1)
@@ -369,7 +377,7 @@ def run_pipeline_loocv(input_file, output_dir='results',
                        latent_dim=64, num_epochs_ae=200,
                        num_epochs=50, num_classes=2,
                        hidden_dim=128, sample_source_dim=4,
-                       project_name="car-t-response"):
+                       project_name="car-t-response", label_col="Response_3m", pos_label="R", neg_label="NR"):
     """run complete pipeline with leave one out cross validation
     
     Parameters:
@@ -453,13 +461,12 @@ def run_pipeline_loocv(input_file, output_dir='results',
     print("="*80)
     
     # Check if we have response information
-    if 'Response_3m' not in adata_latent.obs.columns:
-        print("ERROR: 'response' column not found in the data. Cannot proceed with MIL.")
-        # wandb.finish()
+    if label_col not in adata_latent.obs.columns:
+        print(f"ERROR: '{label_col}' column not found in the data. Cannot proceed with MIL.")
         return None
     
     # Remove patients with NaN responses
-    patients_with_missing = adata_latent.obs[adata_latent.obs['Response_3m'].isna()]['patient_id'].unique()
+    patients_with_missing = adata_latent.obs[adata_latent.obs[label_col].isna()]['patient_id'].unique()
     if len(patients_with_missing) > 0:
         print(f"Removing {len(patients_with_missing)} patients with missing responses")
         adata_latent = adata_latent[~adata_latent.obs['patient_id'].isin(patients_with_missing)].copy()
@@ -478,7 +485,10 @@ def run_pipeline_loocv(input_file, output_dir='results',
         hidden_dim = hidden_dim,
         sample_source_dim = sample_source_dim,
         num_epochs = num_epochs,
-        save_path = mil_dir
+        save_path = mil_dir,
+        label_col=label_col,
+        pos_label=pos_label,
+        neg_label=neg_label
     )
         
 
@@ -493,3 +503,5 @@ def run_pipeline_loocv(input_file, output_dir='results',
         'mil_results': cv_results,
         'results_dir': result_dir
     }
+
+
