@@ -1,8 +1,9 @@
 import scanpy as sc
 import torch
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import Dataset, TensorDataset, DataLoader
 import numpy as np
 from sklearn.model_selection import train_test_split
+import warnings
 
 # 1. Load and explore the .h5ad file containing SCENIC AUC matrix
 def load_and_explore_data(file_path):
@@ -12,16 +13,9 @@ def load_and_explore_data(file_path):
     print("Loading SCENIC AUC matrix data...")
     adata = sc.read_h5ad(file_path)
 
-    # subset to harad and deng datasets
-    # adata = adata[adata.obs["Sample_source.y"] == "Deng"]
-    adata = adata[~adata.obs['Response_3m'].isna()].copy()
-
     # shift adata.X to -0.5 to 0.5
     adata.X = (adata.X - 0.5) * 2
 
-    # remove "Mono", "DC" and "other"
-    
-    # adata = adata[~adata.obs['cell_annotation'].isin(['Mono', 'DC', 'other'])].copy()
     # Print basic information
     print(f"Total cells: {adata.n_obs}")
     print(f"Number of TFs: {adata.n_vars}")
@@ -29,16 +23,14 @@ def load_and_explore_data(file_path):
     # Check if we have patient information
     if 'patient_id' in adata.obs.columns:
         print(f"Number of patients: {adata.obs['patient_id'].nunique()}")
-    
-    # Check if we have response information
-    if 'Response_3m' in adata.obs.columns:
-        print("Response distribution:")
-        print(adata.obs['Response_3m'].value_counts())
+
+    # List available metadata columns (for later task selection)
+    print("Available obs columns:", list(adata.obs.columns))
     
     # Basic stats on AUC values
     auc_matrix = adata.X
-    if isinstance(auc_matrix, np.ndarray) == False:
-        auc_matrix = auc_matrix.toarray()  # Convert sparse matrix if needed
+    if not isinstance(auc_matrix, np.ndarray):
+        auc_matrix = auc_matrix.toarray()  
     
     print(f"AUC matrix shape: {auc_matrix.shape}")
     print(f"AUC value range: [{np.min(auc_matrix)}, {np.max(auc_matrix)}]")
@@ -121,8 +113,25 @@ def preprocess_data(adata, test_size=0.2, val_size=0.1, random_state=42): #42
 class PatientBagDataset(Dataset):
     """
     Dataset for Multiple Instance Learning where each bag contains cells from one patient
+
+    Supports: 
+    - binary / multiclass classification 
+    - regression 
+    - survival (Cox): returns (time, event)
     """
-    def __init__(self, adata, patient_col='patient_id', label_col='Response_3m'):
+    def __init__(
+        self, 
+        adata, 
+        patient_col='patient_id', 
+        task_type: str = "classification",  # "classification" | "regression" | "survival"
+        label_col: str | None = "Response_3m",  # for classification/regression
+        time_col: str | None = None,  # for survival
+        event_col: str | None = None,  # for survival
+        label_map: dict | None = None,  # optional: {"NR":0,"OR":1} or custom
+        drop_missing: bool = True,
+        use_sample_source: bool = True,  # keep your one-hot covariate
+        sample_source_col: str = "Sample_source"
+    ):
         """
         Initialize the MIL dataset
         
@@ -133,59 +142,133 @@ class PatientBagDataset(Dataset):
         """
         self.adata = adata
         self.patient_col = patient_col
+        self.task_type = task_type
         self.label_col = label_col
+        self.time_col = time_col
+        self.event_col = event_col
+        self.label_map = label_map
+        self.drop_missing = drop_missing
         
-        # Get unique patients
-        self.patients = adata.obs[patient_col].unique()
-        
-        # Create a mapping of patient to label
-        self.patient_to_label = dict(zip(
-            adata.obs[patient_col], 
-            adata.obs[label_col]
-        ))
+        # Always define metadata dict (avoid attribute missing)
+        self.patient_metadata = {}
 
-        #############################################
-        
+        # # ---- sanity checks ----
+        # if self.patient_col not in adata.obs.columns:
+        #     raise ValueError(f"'{self.patient_col}' not found in adata.obs")
 
-        if "Sample_source" in adata.obs.columns:
-            # Create one-hot encoding for Sample_source using unique values
-            sample_sources = list(adata.obs["Sample_source"].unique())
-            self.patient_metadata = {}
-            
-            # Get Sample_source for each patient
-            patient_source_map = adata.obs.groupby(self.patient_col, observed=True)['Sample_source'].first().to_dict()
-            
-            # Create one-hot encoding for each patient
-            for patient in self.patients:
-                if patient in patient_source_map:
-                    source = patient_source_map[patient]
-                    one_hot = [1 if s == source else 0 for s in sample_sources]
-                    self.patient_metadata[patient] = one_hot
-            
+        # if self.task_type not in {"classification", "regression", "survival"}:
+        #     raise ValueError("task_type must be one of: 'classification', 'regression', 'survival'")
 
+        # if self.task_type in {"classification", "regression"}:
+        #     if self.label_col is None:
+        #         raise ValueError("For classification/regression, label_col must be provided.")
+        #     if self.label_col not in adata.obs.columns:
+        #         raise ValueError(f"'{self.label_col}' not found in adata.obs")
+
+        # if self.task_type == "survival":
+        #     if self.time_col is None or self.event_col is None:
+        #         raise ValueError("For survival, both time_col and event_col must be provided.")
+        #     if self.time_col not in adata.obs.columns:
+        #         raise ValueError(f"'{self.time_col}' not found in adata.obs")
+        #     if self.event_col not in adata.obs.columns:
+        #         raise ValueError(f"'{self.event_col}' not found in adata.obs")
+
+        # ---- determine patient list (and drop missing if requested) ----
+        all_patients = adata.obs[self.patient_col].astype(str).unique()
+
+        def patient_has_valid_label(patient_id: str) -> bool:
+            rows = adata.obs[self.patient_col].astype(str) == patient_id
+            if self.task_type in {"classification", "regression"}:
+                vals = adata.obs.loc[rows, self.label_col]
+                return vals.notna().any()
+            else:
+                tvals = adata.obs.loc[rows, self.time_col]
+                evals = adata.obs.loc[rows, self.event_col]
+                # need at least one non-missing pair
+                return (tvals.notna() & evals.notna()).any()
+
+        if drop_missing:
+            kept = []
+            dropped = []
+            for p in all_patients:
+                if patient_has_valid_label(p):
+                    kept.append(p)
+                else:
+                    dropped.append(p)
+            if len(dropped) > 0:
+                warnings.warn(f"Dropping {len(dropped)} patients with missing label/time/event")
+            self.patients = np.array(kept, dtype=object)
+        else:
+            self.patients = np.array(all_patients, dtype=object)
+
+        # ---- sample source one-hot (optional) ----
+        if use_sample_source and (sample_source_col in adata.obs.columns):
+            sources = list(adata.obs[sample_source_col].astype(str).unique())
+            patient_source_map = (
+                adata.obs.assign(_pid=adata.obs[self.patient_col].astype(str))
+                .groupby("_pid", observed=True)[sample_source_col]
+                .first()
+                .astype(str)
+                .to_dict()
+            )
+            for p in self.patients:
+                src = patient_source_map.get(p, None)
+                if src is None:
+                    continue
+                one_hot = [1.0 if s == src else 0.0 for s in sources]
+                self.patient_metadata[p] = one_hot
+
+            self.sample_source_dim = len(sources)
+        else:
+            self.sample_source_dim = None
 
         ##############################################
-        
-        # Create patient bags
+        # ---- create patient to label mapping ----
+        ##############################################
         self.patient_bags = {}
         self.patient_labels = {}
         
         for patient in self.patients:
             # Get indices for this patient
-            indices = np.where(adata.obs[patient_col] == patient)[0]
+            indices = np.where(adata.obs[self.patient_col].astype(str).to_numpy() == patient)[0]
             
-            # Get features for this patient's cells
             patient_data = adata.X[indices]
-            if isinstance(patient_data, np.ndarray) == False:
+            if not isinstance(patient_data, np.ndarray):
                 patient_data = patient_data.toarray()
-                
             self.patient_bags[patient] = patient_data
-            
-            # Get label for this patient
-            # Assuming all cells from the same patient have the same label
-            label = self.patient_to_label[patient]
-            self.patient_labels[patient] = label
+
+            # patient-level label
+            if self.task_type in {"classification", "regression"}:
+                # assume patient label is consistent; take first non-missing
+                series = adata.obs.iloc[indices][self.label_col]
+                label_val = series.dropna().iloc[0] if series.notna().any() else None
+                self.patient_labels[patient] = label_val
+            else:
+                obs_sub = adata.obs.iloc[indices][[self.time_col, self.event_col]]
+                obs_sub = obs_sub.dropna()
+                if len(obs_sub) == 0:
+                    self.patient_labels[patient] = (None, None)
+                else:
+                    t = float(obs_sub[self.time_col].iloc[0])
+                    e = float(obs_sub[self.event_col].iloc[0])
+                    self.patient_labels[patient] = (t, e)
         
+        # For classification: create mapping if needed (string -> int)
+        if self.task_type == "classification":
+            raw_labels = [self.patient_labels[p] for p in self.patients]
+            # apply explicit map if provided
+            if self.label_map is not None:
+                self._label_to_int = dict(self.label_map)
+            else:
+                # auto factorize (stable order)
+                uniq = sorted(list({str(x) for x in raw_labels}))
+                self._label_to_int = {lab: i for i, lab in enumerate(uniq)}
+
+            self.num_classes = len(set(self._label_to_int.values()))
+        else:
+            self._label_to_int = None
+            self.num_classes = None
+
         # Convert patients to a list for indexing
         self.patient_list = list(self.patients)
     
@@ -203,23 +286,31 @@ class PatientBagDataset(Dataset):
         - patient: Patient identifier
         """
         patient = self.patient_list[idx]
-        bag = self.patient_bags[patient]
-        label = self.patient_labels[patient]
+        bag = torch.FloatTensor(self.patient_bags[patient])
         
-        # Convert to proper format
-        bag = torch.FloatTensor(bag)
-        
-        # Handle different label types
-        if isinstance(label, str):
-            # Map string labels to integers
-            
-            label_map = {"NR":0, "OR":1}
-            label = label_map[label]
-        
-        label = torch.tensor(label, dtype=torch.long)
+        if self.task_type == "classification":
+            lab = self.patient_labels[patient]
+            if isinstance(lab, str):
+                key = lab
+            else:
+                key = str(lab)
+            y = self._label_to_int[key]
+            label = torch.tensor(y, dtype=torch.long)
 
-        if self.patient_metadata:
-            one_hot_sample_source = torch.tensor(self.patient_metadata[patient], dtype=torch.float)
-            return bag, label, patient, one_hot_sample_source
+        elif self.task_type == "regression":
+            lab = self.patient_labels[patient]
+            label = torch.tensor(float(lab), dtype=torch.float32)
+
+        else:  # survival
+            t, e = self.patient_labels[patient]
+            time = torch.tensor(float(t), dtype=torch.float32)
+            event = torch.tensor(float(e), dtype=torch.float32)
+            label = (time, event)
+        
+        # sample source covariate
+        if self.sample_source_dim is not None and (patient in self.patient_metadata):
+            one_hot = torch.tensor(self.patient_metadata[patient], dtype=torch.float32)
+            return bag, label, patient, one_hot
         else:
             return bag, label, patient
+        
