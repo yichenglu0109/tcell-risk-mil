@@ -60,8 +60,21 @@ class Autoencoder(nn.Module):
         z = self.encode(x)
         return self.decode(z)
     
+# Helper function to extract input data from batch
+def _get_x_from_batch(batch):
+    # batch could be (x, y), x only, or dict-like
+    if isinstance(batch, (tuple, list)):
+        return batch[0]
+    if isinstance(batch, dict):
+        for k in ["x", "X", "data", "inputs"]:
+            if k in batch:
+                return batch[k]
+        # fallback: first value
+        return next(iter(batch.values()))
+    return batch
+
 # Training function for the autoencoder
-def train_autoencoder(train_loader, val_loader, input_dim, latent_dim=32, num_epochs=100, 
+def train_autoencoder(train_loader, val_loader, input_dim, latent_dim=48, num_epochs=100, 
                       learning_rate=5e-4, weight_decay=1e-4, patience=10, save_path='models'):
     """
     Train the autoencoder model
@@ -94,7 +107,7 @@ def train_autoencoder(train_loader, val_loader, input_dim, latent_dim=32, num_ep
     
     # Learning rate scheduler
     # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
     
     # Use GPU if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -116,9 +129,9 @@ def train_autoencoder(train_loader, val_loader, input_dim, latent_dim=32, num_ep
         # Training phase
         model.train()
         train_loss = 0
-        for data, _ in train_loader:
-            data = data.to(device)
-            
+        for batch in train_loader:
+            data = _get_x_from_batch(batch).to(device)
+
             # Forward pass
             outputs = model(data)
             loss = criterion(outputs, data)
