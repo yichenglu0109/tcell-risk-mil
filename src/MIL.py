@@ -21,6 +21,7 @@ class AttentionMIL(nn.Module):
         super(AttentionMIL, self).__init__()
 
         self.use_sample_source = sample_source_dim is not None
+        self.bag_dim = hidden_dim + (sample_source_dim if self.use_sample_source else 0)
         
         # Feature extractor network
         self.feature_extractor = nn.Sequential(
@@ -41,21 +42,22 @@ class AttentionMIL(nn.Module):
             nn.Linear(hidden_dim, 1)
         )
         
-        if self.use_sample_source:
-            self.classifier = nn.Sequential(
-                nn.Linear(hidden_dim + sample_source_dim, hidden_dim//2),
-                nn.ReLU(),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim//2, num_classes)
-            )
-        else:
-            # Classifier
-            self.classifier = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim, num_classes)
-            ) #nn.Linear(hidden_dim, num_classes)
+        # --- Task-specific heads ---
+        # Classification head (binary or multi-class)
+        self.cls_head = nn.Sequential(
+            nn.Linear(self.bag_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, num_classes)
+        )
+
+        # Survival head (Cox): single risk score per bag
+        self.surv_head = nn.Sequential(
+            nn.Linear(self.bag_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim // 2, 1)
+        )
     
     def forward(self, x, sample_source=None, return_attention=False):
         """
@@ -69,16 +71,18 @@ class AttentionMIL(nn.Module):
         - logits: Class logits [batch_size, num_classes]
         - attention_weights: Attention weights if return_attention=True
         """
-        device = next(self.parameters()).device
+        # device = next(self.parameters()).device
         # x shape: [batch_size, num_instances, features]
         batch_size = len(x)
         
         # Process each bag
         all_logits = []
         all_attention_weights = []
-        
+        all_risks = []
+
         for i in range(batch_size):
             instances = x[i]  # [num_instances, features]
+            instances = instances.to(next(self.parameters()).device)
             
             # Extract features from each instance
             instance_features = self.feature_extractor(instances)  # [num_instances, hidden_dim]
@@ -91,37 +95,30 @@ class AttentionMIL(nn.Module):
             weighted_features = torch.sum(
                 instance_features * attention_weights, dim=0
             )  # [hidden_dim]
-            
-            
 
-            #########################################################
-            ########## Add sample source if provided #################
-            #########################################################
-            if self.use_sample_source and sample_source is not None:
-                
-            # get the sample source for this patient
-                sample_source_i = sample_source.squeeze(0)
-                # print(f"Patient: {patient}")
-                # # Print shape and example values for debugging
-                # print(f"Sample source shape: {sample_source.shape}")
-                # print(f"Example sample source value: {sample_source[0]}")
-                # print(f"Sample source shape: {weighted_features.shape}")
-                
-                combined_features = torch.cat([weighted_features, sample_source_i], dim=0)
-                # print(f"combined_features shape: {combined_features.shape}")
-                logits = self.classifier(combined_features)
-            
-            else:
-                logits = self.classifier(weighted_features)
+            # bag-level feature
+            bag_feat = weighted_features  # [hidden_dim]
+
+            # add sample source if used
+            if self.use_sample_source:
+                if sample_source is None:
+                    raise ValueError("sample_source_dim was set but sample_source is None in forward()")
+                sample_source_i = sample_source[i]  # [sample_source_dim]
+                sample_source_i = sample_source[i].view(-1) # flatten
+                bag_feat = torch.cat([bag_feat, sample_source_i], dim=0)  # [bag_dim]
+
+            # heads
+            logits = self.cls_head(bag_feat)            # [num_classes]
+            risk = self.surv_head(bag_feat).squeeze(-1) # scalar
                 
             all_logits.append(logits)
+            all_risks.append(risk)
             all_attention_weights.append(attention_weights)
         
-        # Stack results
-        logits = torch.stack(all_logits)  # [batch_size, num_classes]
-        attention_weights = all_attention_weights  # List of [num_instances, 1]
-        
+        logits = torch.stack(all_logits, dim=0)  # [B, num_classes]
+        risks  = torch.stack(all_risks, dim=0)   # [B]
+
+        out = {"logits": logits, "risk": risks}
         if return_attention:
-            return logits, attention_weights
-        else:
-            return logits
+            out["attn"] = all_attention_weights
+        return out
