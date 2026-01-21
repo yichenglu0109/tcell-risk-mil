@@ -53,6 +53,12 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
     # create dataset
     full_dataset = PatientBagDataset(adata, label_col=label_col)
 
+    sample_source_dim = (
+        full_dataset.sample_source_dim
+        if hasattr(full_dataset, "sample_source_dim")
+        else None
+    )
+
     # get all patients and their labels
     patients = np.array(full_dataset.patient_list)
     labels = np.array([full_dataset.patient_labels[p] for p in patients])
@@ -97,7 +103,7 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
         os.makedirs(fold_save_path, exist_ok=True)
 
         # train model
-        model = AttentionMIL(input_dim, num_classes, hidden_dim, dropout=0.25, sample_source_dim=sample_source_dim).to(device)
+        model = AttentionMIL(input_dim=input_dim, num_classes=num_classes, hidden_dim=hidden_dim, dropout=0.25, sample_source_dim=sample_source_dim).to(device)
 
         # use class weights to address imbalance (compute from TRAIN fold only)
         y_raw = train_dataset.adata.obs[label_col].to_numpy()
@@ -390,7 +396,7 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
 def run_pipeline_loocv(input_file, output_dir='results',
                        latent_dim=64, num_epochs_ae=200,
                        num_epochs=50, num_classes=2,
-                       hidden_dim=128, sample_source_dim=4,
+                       hidden_dim=128, sample_source_dim=None,
                        project_name="car-t-response", label_col="Response_3m", pos_label="R", neg_label="NR"):
     """run complete pipeline with leave one out cross validation
     
@@ -500,9 +506,9 @@ def run_pipeline_loocv(input_file, output_dir='results',
         sample_source_dim = sample_source_dim,
         num_epochs = num_epochs,
         save_path = mil_dir,
-        label_col=label_col,
-        pos_label=pos_label,
-        neg_label=neg_label
+        label_col = label_col,
+        pos_label = pos_label,
+        neg_label = neg_label
     )
         
 
