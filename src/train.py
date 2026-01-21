@@ -144,13 +144,24 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
 
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-            for bags, batch_labels, _, one_hot_sample_source in train_loader:
+            for batch in train_loader:
+                # 支援 Dataset 回傳 (bag, label, patient) 或 (bag, label, patient, one_hot)
+                if len(batch) == 4:
+                    bags, batch_labels, _, one_hot_sample_source = batch
+                    one_hot_sample_source = one_hot_sample_source.to(device)
+                else:
+                    bags, batch_labels, _ = batch
+                    one_hot_sample_source = None
+
                 bags = [bag.to(device) for bag in bags]
                 batch_labels = batch_labels.to(device)
-                one_hot_sample_source = one_hot_sample_source.to(device)
 
-                # Forward pass
-                out = model(bags, sample_source=one_hot_sample_source)
+                # Forward pass（有 sample_source 才傳）
+                if one_hot_sample_source is not None:
+                    out = model(bags, sample_source=one_hot_sample_source)
+                else:
+                    out = model(bags)
+
                 logits = out["logits"]
                 loss = criterion(logits, batch_labels)
 
@@ -215,50 +226,53 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
         # patient_attentions = {}
 
         with torch.no_grad():
-            for bags, batch_labels, patient_ids, one_hot_sample_source in test_loader:
+            for batch in test_loader:
+                # 支援 Dataset 回傳 (bag, label, patient) 或 (bag, label, patient, one_hot)
+                if len(batch) == 4:
+                    bags, batch_labels, patient_ids, one_hot_sample_source = batch
+                    one_hot_sample_source = one_hot_sample_source.to(device)
+                else:
+                    bags, batch_labels, patient_ids = batch
+                    one_hot_sample_source = None
+
                 bags = [bag.to(device) for bag in bags]
                 batch_labels = batch_labels.to(device)
-                one_hot_sample_source = one_hot_sample_source.to(device)
 
-                # Forward pass
-                out = model(bags, sample_source=one_hot_sample_source, return_attention=True)
+                # Forward pass（有 sample_source 才傳）
+                if one_hot_sample_source is not None:
+                    out = model(bags, sample_source=one_hot_sample_source, return_attention=True)
+                else:
+                    out = model(bags, return_attention=True)
+
                 logits = out["logits"]
-                attn_weights = out["attn"]                
+                attn_weights = out["attn"]
 
-                # get predictions
                 probs = F.softmax(logits, dim=1)
                 _, preds = torch.max(logits, 1)
 
-                # convert to numpy
                 preds_np = preds.cpu().numpy()
                 labels_np = batch_labels.cpu().numpy()
                 probs_np = probs.cpu().numpy()
 
-                # Get the patient_id and store results
                 patient_id = patient_ids[0]
                 true_label = labels_np[0]
                 pred_label = preds_np[0]
                 pos_prob = probs_np[0, 1] if num_classes == 2 else None
 
-                # Add to accumulators for global metrics
                 all_true_labels.append(true_label)
                 all_predicted_labels.append(pred_label)
-                all_prediction_probs.append(pos_prob if num_classes ==2 else probs_np[0])
+                all_prediction_probs.append(pos_prob if num_classes == 2 else probs_np[0])
                 all_patient_ids.append(patient_id)
 
-                # Store patient-specific results
                 cv_results['patient_predictions'][patient_id] = {
                     'true_label': true_label,
                     'predicted_label': pred_label,
                     'probabilities': probs_np[0].tolist(),
                     'correct': (pred_label == true_label)
                 }
-                
-                    
-                
 
-                # Store attention weights
                 cv_results['attention_weights'][patient_id] = [w.cpu().numpy() for w in attn_weights]
+
 
                 # Add to wandb table
                 # wandb_patient_table.add_data(

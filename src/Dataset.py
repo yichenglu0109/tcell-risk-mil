@@ -150,7 +150,8 @@ class PatientBagDataset(Dataset):
         self.drop_missing = drop_missing
         
         # Always define metadata dict (avoid attribute missing)
-        self.patient_metadata = {}
+        self.patient_metadata = None
+        self.sample_sources = None
 
         # # ---- sanity checks ----
         # if self.patient_col not in adata.obs.columns:
