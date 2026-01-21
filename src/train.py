@@ -51,7 +51,7 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
     #            })
     
     # create dataset
-    full_dataset = PatientBagDataset(adata)
+    full_dataset = PatientBagDataset(adata, label_col=label_col)
 
     # get all patients and their labels
     patients = np.array(full_dataset.patient_list)
@@ -85,8 +85,8 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
         
 
         # create train and test datasets
-        train_dataset = PatientBagDataset(adata.copy()[adata.obs['patient_id'].isin(train_patients)])
-        test_dataset = PatientBagDataset(adata.copy()[adata.obs['patient_id'] == test_patient])
+        train_dataset = PatientBagDataset(adata.copy()[adata.obs['patient_id'].isin(train_patients)], label_col=label_col)
+        test_dataset = PatientBagDataset(adata.copy()[adata.obs['patient_id'] == test_patient], label_col=label_col)
 
         # create data loaders
         train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
