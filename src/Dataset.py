@@ -123,14 +123,14 @@ class PatientBagDataset(Dataset):
         self, 
         adata, 
         patient_col='patient_id', 
-        task_type: str = "classification",  # "classification" | "regression" | "survival"
-        label_col: str | None = "Response_3m",  # for classification/regression
-        time_col: str | None = None,  # for survival
-        event_col: str | None = None,  # for survival
-        label_map: dict | None = None,  # optional: {"NR":0,"OR":1} or custom
-        drop_missing: bool = True,
-        use_sample_source: bool = True,  # keep your one-hot covariate
-        sample_source_col: str = "Sample_source"
+        task_type="classification",  # "classification" | "regression" | "survival"
+        label_col="Response_3m",  # for classification/regression
+        time_col=None,  # for survival
+        event_col=None,  # for survival
+        label_map=None,  # optional: {"NR":0,"OR":1} or custom
+        drop_missing=True,
+        use_sample_source=True,  # keep your one-hot covariate
+        sample_source_col="Sample_source"
     ):
         """
         Initialize the MIL dataset
@@ -269,7 +269,7 @@ class PatientBagDataset(Dataset):
             self._label_to_int = None
             self.num_classes = None
 
-        # Convert patients to a list for indexing
+    # Convert patients to a list for indexing
         self.patient_list = list(self.patients)
     
     def __len__(self):
