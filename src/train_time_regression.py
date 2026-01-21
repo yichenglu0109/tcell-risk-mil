@@ -324,7 +324,10 @@ def main():
             test_adata,
             device,
             use_sample_source=args.use_sample_source,
-            return_attention=True
+            return_attention=True,
+            patient_col=args.patient_col,
+            time_col=args.time_col,
+            sample_source_col="Sample_source",
         )
 
         y_true.append(yt)
