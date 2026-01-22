@@ -93,6 +93,15 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
         # create train and test datasets
         train_dataset = PatientBagDataset(adata.copy()[adata.obs['patient_id'].isin(train_patients)], label_col=label_col)
         test_dataset = PatientBagDataset(adata.copy()[adata.obs['patient_id'] == test_patient], label_col=label_col)
+        # ===== DEBUG: patient-level labels =====
+        labels_debug = [train_dataset.patient_labels[p] for p in train_dataset.patient_list]
+        labels_debug = np.array(labels_debug, dtype=str)
+
+        unique, counts = np.unique(labels_debug, return_counts=True)
+        print("[DEBUG] patient-level label distribution:")
+        for u, c in zip(unique, counts):
+            print(f"  {u}: {c}")
+        # ======================================
 
         # create data loaders
         train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
