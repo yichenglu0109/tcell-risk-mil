@@ -53,6 +53,12 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
     # create dataset
     full_dataset = PatientBagDataset(adata, label_col=label_col)
 
+    # ---- FIX 1: freeze label_map from full_dataset so every fold uses the same mapping ----
+    label_map = full_dataset._label_to_int  # e.g. {"CD19neg":0, "CD19pos":1}
+    if num_classes == 2:
+        # optional safety: print mapping once
+        print("[INFO] Global label_map:", label_map)
+
     sample_source_dim = (
         full_dataset.sample_source_dim
         if hasattr(full_dataset, "sample_source_dim")
@@ -90,9 +96,18 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
         train_patients = np.array([p for p in patients if p != test_patient])
         
 
-        # create train and test datasets
-        train_dataset = PatientBagDataset(adata.copy()[adata.obs['patient_id'].isin(train_patients)], label_col=label_col)
-        test_dataset = PatientBagDataset(adata.copy()[adata.obs['patient_id'] == test_patient], label_col=label_col)
+        # create train and test datasets (Fixed 2: pass label_map to ensure consistent mapping)
+        train_dataset = PatientBagDataset(
+            adata.copy()[adata.obs['patient_id'].isin(train_patients)],
+            label_col=label_col,
+            label_map=label_map
+        )
+        test_dataset = PatientBagDataset(
+            adata.copy()[adata.obs['patient_id'] == test_patient],
+            label_col=label_col,
+            label_map=label_map
+        )
+
         # ===== DEBUG: patient-level labels =====
         labels_debug = [train_dataset.patient_labels[p] for p in train_dataset.patient_list]
         labels_debug = np.array(labels_debug, dtype=str)
@@ -115,13 +130,20 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
         model = AttentionMIL(input_dim=input_dim, num_classes=num_classes, hidden_dim=hidden_dim, dropout=0.25, sample_source_dim=sample_source_dim).to(device)
 
         # use class weights to address imbalance (compute from TRAIN fold only)
-        y_raw = train_dataset.adata.obs[label_col].to_numpy()
+        # ---- FIX 3: compute class weights from TRAIN PATIENTS (patient-level), using frozen label_map ----
+        y_pat_raw = np.array([train_dataset.patient_labels[p] for p in train_dataset.patient_list], dtype=str)
+        y = np.array([label_map[v] for v in y_pat_raw], dtype=int)
 
-        bad = set(np.unique(y_raw)) - {neg_label, pos_label}
-        if len(bad) > 0:
-            raise ValueError(f"Unexpected labels in {label_col}: {bad}. Expected only {neg_label}/{pos_label}.")
+        # handle rare fold where only one class exists (shouldn't happen much in LOOCV, but safe)
+        classes_present = np.unique(y)
+        if len(classes_present) < num_classes:
+            # fallback: no weighting (or you can set weight=1 for missing class)
+            class_weights = torch.ones(num_classes, device=device)
+        else:
+            cw = compute_class_weight(class_weight="balanced", classes=np.arange(num_classes), y=y)
+            class_weights = torch.FloatTensor(cw).to(device)
 
-        y = np.where(y_raw == neg_label, 0, 1)
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
 
         class_weights = compute_class_weight(class_weight="balanced", classes=np.unique(y), y=y)
         class_weights = torch.FloatTensor(class_weights).to(device)
