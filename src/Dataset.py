@@ -314,4 +314,139 @@ class PatientBagDataset(Dataset):
             return bag, label, patient, one_hot
         else:
             return bag, label, patient
-        
+
+DAYS_PER_MONTH = 30.44  # average days per month
+
+def _first_non_null(series):
+    s = series.dropna()
+    return s.iloc[0] if len(s) > 0 else np.nan
+
+def build_patient_survival_table(
+    obs,
+    patient_col="patient_id",
+    relapse_col="relapse_y_n",
+    ttr_col="time_to_relapse_days",
+    fu_col="follow_up_duration_months",
+    days_per_month=DAYS_PER_MONTH,
+    drop_inconsistent=True,
+):
+    """
+    Returns:
+      patients: list[str]
+      time_days: np.ndarray shape [N]
+      event: np.ndarray shape [N] (0/1)
+    Does NOT modify adata.
+    """
+    tmp = obs[[patient_col, relapse_col, ttr_col, fu_col]].copy()
+    tmp[patient_col] = tmp[patient_col].astype(str)
+
+    byp = tmp.groupby(patient_col, observed=True).agg({
+        relapse_col: _first_non_null,
+        ttr_col: _first_non_null,
+        fu_col: _first_non_null,
+    })
+
+    # normalize relapse to 0/1 if it's "Y"/"N" etc.
+    r = byp[relapse_col]
+    if r.dtype == object:
+        r2 = r.astype(str).str.strip().str.upper()
+        r = r2.map({"1": 1, "0": 0, "Y": 1, "N": 0, "TRUE": 1, "FALSE": 0})
+    r = r.astype(float)
+
+    ttr = byp[ttr_col].astype(float)
+    fu_m = byp[fu_col].astype(float)
+    fu_days = fu_m * float(days_per_month)
+
+    event = np.where(r == 1.0, 1, 0).astype(int)
+    time_days = np.where(event == 1, ttr.to_numpy(), fu_days.to_numpy()).astype(float)
+
+    # keep only valid rows
+    keep = np.isfinite(time_days) & np.isfinite(event)
+
+    # optional QC: if event==1 and fu exists but fu_days < ttr -> inconsistent
+    if drop_inconsistent:
+        bad = np.isfinite(fu_days.to_numpy()) & (event == 1) & (fu_days.to_numpy() < ttr.to_numpy())
+        if np.any(bad):
+            print(f"[WARN] Dropping {bad.sum()} inconsistent patients where follow_up_days < time_to_relapse_days (event=1).")
+            keep = keep & (~bad)
+
+    byp2 = byp.loc[keep].copy()
+    patients = byp2.index.astype(str).tolist()
+
+    # recompute aligned arrays
+    r = byp2[relapse_col]
+    if r.dtype == object:
+        r2 = r.astype(str).str.strip().str.upper()
+        r = r2.map({"1": 1, "0": 0, "Y": 1, "N": 0, "TRUE": 1, "FALSE": 0})
+    r = r.astype(float).to_numpy()
+
+    event = np.where(r == 1.0, 1, 0).astype(int)
+    ttr = byp2[ttr_col].astype(float).to_numpy()
+    fu_days = (byp2[fu_col].astype(float).to_numpy()) * float(days_per_month)
+    time_days = np.where(event == 1, ttr, fu_days).astype(float)
+
+    return patients, time_days, event
+
+
+class PatientBagSurvivalDataset(Dataset):
+    """
+    Bags per patient + (time, event) computed from existing obs columns
+    Does NOT write anything to adata.obs.
+    """
+    def __init__(
+        self,
+        adata,
+        patient_col="patient_id",
+        relapse_col="relapse_y_n",
+        ttr_col="time_to_relapse_days",
+        fu_col="follow_up_duration_months",
+        days_per_month=DAYS_PER_MONTH,
+        drop_inconsistent=True,
+    ):
+        self.adata = adata
+        self.patient_col = patient_col
+
+        patients, time_days, event = build_patient_survival_table(
+            adata.obs,
+            patient_col=patient_col,
+            relapse_col=relapse_col,
+            ttr_col=ttr_col,
+            fu_col=fu_col,
+            days_per_month=days_per_month,
+            drop_inconsistent=drop_inconsistent,
+        )
+
+        self.patient_list = patients
+        self.time_days = time_days
+        self.event = event
+
+        # cache bags
+        pid_arr = adata.obs[patient_col].astype(str).to_numpy()
+        self.patient_bags = {}
+        for pid in self.patient_list:
+            idx = np.where(pid_arr == pid)[0]
+            X = adata.X[idx]
+            if not isinstance(X, np.ndarray):
+                X = X.toarray()
+            self.patient_bags[pid] = X
+
+        # index mapping
+        self._pid_to_idx = {p: i for i, p in enumerate(self.patient_list)}
+
+    def __len__(self):
+        return len(self.patient_list)
+
+    def __getitem__(self, idx):
+        pid = self.patient_list[idx]
+        bag = torch.tensor(self.patient_bags[pid], dtype=torch.float32)
+        t = torch.tensor(float(self.time_days[idx]), dtype=torch.float32)
+        e = torch.tensor(int(self.event[idx]), dtype=torch.float32)
+        return bag, t, e, pid
+
+
+def collate_survival(batch):
+    bags, times, events, pids = zip(*batch)
+    # bags is list[tensor] variable length
+    times = torch.stack(times, dim=0)     # [B]
+    events = torch.stack(events, dim=0)   # [B]
+    return list(bags), times, events, list(pids)
