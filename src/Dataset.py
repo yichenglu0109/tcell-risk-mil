@@ -372,8 +372,9 @@ def build_patient_survival_table(
 
     # keep only valid rows (drops N/A automatically)
     keep = np.isfinite(time_days) & np.isfinite(event)
-    
-    event = event.astype(int)
+
+    event = event[keep].astype(int)
+    time_days = time_days[keep].astype(float)
 
     # optional QC: if event==1 and fu exists but fu_days < ttr -> inconsistent
     if drop_inconsistent:

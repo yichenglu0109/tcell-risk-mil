@@ -19,12 +19,19 @@ class CoxPHLoss(nn.Module):
     def __init__(self):
         super().__init__()
 
+
     def forward(self, risk, time, event):
         # risk: [B] (higher = higher hazard)
         # time: [B]
         # event: [B] float 0/1
-        device = risk.device
 
+        # ===== ✅ 加在這裡（第一行邏輯）=====
+        if (event > 0).sum() == 0:
+            # 沒有任何 event，回傳「可 backprop 的 0」
+            return risk.sum() * 0.0
+        # ===================================
+        device = risk.device
+        
         # sort by time descending
         order = torch.argsort(time, descending=True)
         risk = risk[order]
@@ -92,7 +99,7 @@ def train_one_fold(train_ds, input_dim, hidden_dim, dropout, device,
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_survival)
+    loader = DataLoader(train_ds, batch_size=len(train_ds), shuffle=False, collate_fn=collate_survival)
 
     model = AttentionMIL(
         input_dim=input_dim,
