@@ -175,13 +175,16 @@ def train_one_fold(
                 bag, label, _patient = batch
                 one_hot = None
 
-            bag = bag.to(device)          # [n_cells, latent_dim]
-            y = label.to(device).float()  # scalar
+            bag = bag.to(device)
+            if bag.dim() == 3:            # [1, n_cells, latent_dim]
+                bag = bag.squeeze(0)      # -> [n_cells, latent_dim]
 
-            # MIL forward expects list of bags
+            y = label.to(device).float()
+            if y.dim() > 0:
+                y = y.view(-1)[0]         # -> scalar tensor
+
             out = model([bag], sample_source=one_hot.unsqueeze(0) if one_hot is not None else None)
-            pred = out["risk"].squeeze(0)  # [1] -> scalar
-
+            pred = out["risk"].view(-1)[0]   # -> scalar
             loss = criterion(pred, y)
             optimizer.zero_grad()
             loss.backward()
@@ -239,7 +242,12 @@ def predict_one_patient(model, test_adata, device, use_sample_source=True, retur
             sample_source=one_hot.unsqueeze(0) if one_hot is not None else None,
             return_attention=return_attention
         )
-        pred = float(out["risk"].squeeze(0).item())
+        bag = bag.to(device)
+        if bag.dim() == 3:
+            bag = bag.squeeze(0)
+
+        out = model([bag], return_attention=return_attention)
+        pred = float(out["risk"].view(-1)[0].item())
 
         attn = None
         if return_attention:
