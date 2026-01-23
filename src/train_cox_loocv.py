@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from lifelines.utils import concordance_index
 import scanpy as sc
 
 from src.MIL import AttentionMIL
@@ -31,7 +32,7 @@ class CoxPHLoss(nn.Module):
             return risk.sum() * 0.0
         # ===================================
         device = risk.device
-        
+
         # sort by time descending
         order = torch.argsort(time, descending=True)
         risk = risk[order]
@@ -250,10 +251,20 @@ def main():
         risks.append(r)
 
     risks = np.array(risks, float)
-    ci = c_index(time_days, event, risks)
-    print("\n===== Cox LOOCV Results =====")
-    print(f"C-index: {ci:.4f}")
 
+    ci = c_index(time_days, event, risks)
+    ci_flip = c_index(time_days, event, -risks)
+
+    ci_ll = concordance_index(time_days, risks, event)
+    ci_ll_flip = concordance_index(time_days, -risks, event)
+
+    print("\n===== Cox LOOCV Results =====")
+    print(f"C-index (simple): {ci:.4f}")
+    print(f"C-index (simple, flipped): {ci_flip:.4f}")
+    print(f"C-index (lifelines): {ci_ll:.4f}")
+    print(f"C-index (lifelines, flipped): {ci_ll_flip:.4f}")
+    print("=============================\n")
+    
     results = {
         "patients": patients.tolist(),
         "time_days": time_days.tolist(),
