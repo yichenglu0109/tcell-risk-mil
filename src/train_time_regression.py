@@ -55,26 +55,38 @@ def spearman_corr(x: np.ndarray, y: np.ndarray) -> float:
         return float("nan")
     return float((vx * vy).sum() / denom)
 
+def _normalize_yesno_to_01(x):
+    if pd.isna(x):
+        return np.nan
+    s = str(x).strip().upper()
+
+    yes = {"YES", "Y", "1", "TRUE", "T"}
+    no  = {"NO", "N", "0", "FALSE", "F"}
+    na  = {"NA", "N/A", "NONE", "NULL", "NAN", ""}
+
+    if s in yes:
+        return 1.0
+    if s in no:
+        return 0.0
+    if s in na:
+        return np.nan
+    return np.nan
+
 
 def filter_relapse_only(adata, patient_col, relapse_col, time_col, relapse_positive_value=1):
     """
-    Keep only patients with relapse == 1 AND non-missing time_to_relapse.
+    Keep only patients with relapse == relapse_positive_value AND non-missing time_col.
     Filter at patient-level then subset cells accordingly.
     """
     obs = adata.obs.copy()
 
-    if patient_col not in obs.columns:
-        raise ValueError(f"Missing column in adata.obs: {patient_col}")
-    if relapse_col not in obs.columns:
-        raise ValueError(f"Missing column in adata.obs: {relapse_col}")
-    if time_col not in obs.columns:
-        raise ValueError(f"Missing column in adata.obs: {time_col}")
+    for c in (patient_col, relapse_col, time_col):
+        if c not in obs.columns:
+            raise ValueError(f"Missing column in adata.obs: {c}")
 
-    # Patient-level relapse/time (take first non-missing per patient)
     tmp = obs[[patient_col, relapse_col, time_col]].copy()
     tmp[patient_col] = tmp[patient_col].astype(str)
 
-    # groupby patient, take first non-null for each col
     def first_non_null(s):
         s2 = s.dropna()
         return s2.iloc[0] if len(s2) > 0 else np.nan
@@ -83,12 +95,22 @@ def filter_relapse_only(adata, patient_col, relapse_col, time_col, relapse_posit
         {relapse_col: first_non_null, time_col: first_non_null}
     )
 
-    # relapse-only
+    # keep a raw copy for debugging
+    byp_raw = byp.copy()
+
+    byp[relapse_col] = byp[relapse_col].apply(_normalize_yesno_to_01)
+    byp[time_col] = pd.to_numeric(byp[time_col], errors="coerce")
+
+    pos = float(relapse_positive_value)
+
     kept_patients = byp.index[
-        (byp[relapse_col] == relapse_positive_value) & (byp[time_col].notna())
+        (byp[relapse_col] == pos) & (byp[time_col].notna())
     ].astype(str)
 
     if len(kept_patients) == 0:
+        print("[DEBUG] relapse_col raw (patient-level):", byp_raw[relapse_col].value_counts(dropna=False).to_dict())
+        print("[DEBUG] relapse_col normalized (patient-level):", byp[relapse_col].value_counts(dropna=False).to_dict())
+        print("[DEBUG] time_col non-null count:", int(byp[time_col].notna().sum()), "/", int(byp.shape[0]))
         raise ValueError("After filtering relapse-only patients, nothing remains.")
 
     adata_sub = adata[adata.obs[patient_col].astype(str).isin(kept_patients)].copy()
