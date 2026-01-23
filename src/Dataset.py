@@ -2,6 +2,7 @@ import scanpy as sc
 import torch
 from torch.utils.data import Dataset, TensorDataset, DataLoader
 import numpy as np
+import pandas as pd
 from sklearn.model_selection import train_test_split
 import warnings
 
@@ -347,22 +348,15 @@ def build_patient_survival_table(
     })
 
     # normalize relapse to 0/1; anything else (e.g., N/A) -> NaN
-    r = byp[relapse_col]
+    r = byp[relapse_col].astype(str).str.strip().str.upper()
 
-    if r.dtype == object:
-        r2 = r.astype(str).str.strip().str.upper()
+    r = r.map({
+        "YES": 1, "Y": 1, "TRUE": 1, "T": 1, "1": 1,
+        "NO": 0,  "N": 0, "FALSE": 0, "F": 0, "0": 0,
+        "N/A": np.nan, "NA": np.nan, "NAN": np.nan, "NONE": np.nan, "": np.nan,
+    })
 
-        # ✅ 只接受 YES/NO；其他（N/A, NA, "", NONE...）都變 NaN
-        r = r2.map({
-            "YES": 1, "Y": 1, "TRUE": 1, "T": 1, "1": 1,
-            "NO": 0,  "N": 0, "FALSE": 0, "F": 0, "0": 0,
-        })
-    else:
-        # 如果本來就是數值，僅允許 0/1；其他變 NaN
-        r = r.astype(float)
-        r = r.where(r.isin([0.0, 1.0]), np.nan)
-
-    r = r.astype(float)  # now contains 0/1/NaN
+    r = pd.to_numeric(r, errors="coerce")  # 變成 float (0/1/NaN)
 
     ttr = byp[ttr_col].astype(float)
     fu_m = byp[fu_col].astype(float)
@@ -392,11 +386,12 @@ def build_patient_survival_table(
     patients = byp2.index.astype(str).tolist()
 
     # recompute aligned arrays
-    r = byp2[relapse_col]
-    if r.dtype == object:
-        r2 = r.astype(str).str.strip().str.upper()
-        r = r2.map({"1": 1, "0": 0, "Y": 1, "N": 0, "TRUE": 1, "FALSE": 0})
-    r = r.astype(float).to_numpy()
+    r = byp2[relapse_col].astype(str).str.strip().str.upper()
+    r = r.map({
+        "YES": 1, "Y": 1, "TRUE": 1, "T": 1, "1": 1,
+        "NO": 0,  "N": 0, "FALSE": 0, "F": 0, "0": 0,
+    })
+    r = pd.to_numeric(r, errors="coerce").to_numpy()
 
     event = np.where(r == 1.0, 1, 0).astype(int)
     ttr = byp2[ttr_col].astype(float).to_numpy()
