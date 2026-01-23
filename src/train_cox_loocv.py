@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from lifelines.utils import concordance_index
+# from lifelines.utils import concordance_index
 import scanpy as sc
 
 from src.MIL import AttentionMIL
@@ -255,8 +255,8 @@ def main():
     ci = c_index(time_days, event, risks)
     ci_flip = c_index(time_days, event, -risks)
 
-    ci_ll = concordance_index(time_days, risks, event)
-    ci_ll_flip = concordance_index(time_days, -risks, event)
+    # ci_ll = concordance_index(time_days, risks, event)
+    # ci_ll_flip = concordance_index(time_days, -risks, event)
 
     print("\n===== Cox LOOCV Results =====")
     print(f"C-index (simple): {ci:.4f}")
