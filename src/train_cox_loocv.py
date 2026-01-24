@@ -142,6 +142,9 @@ def train_one_fold(train_ds, input_dim, hidden_dim, dropout, device,
 
         epoch_loss = running / max(steps, 1)
 
+        # logging
+        print(f"[train] ep={ep:03d} loss={epoch_loss:.4f} best={best:.4f} no_imp={no_imp}")
+
         if epoch_loss < best - 1e-8:
             best = epoch_loss
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
