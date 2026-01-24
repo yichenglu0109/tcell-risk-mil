@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import pickle
+import math
 from torch.utils.data import DataLoader
 
 import scanpy as sc
@@ -156,7 +157,7 @@ def train_one_fold(
         sample_source_dim=sample_source_dim if use_sample_source else None,
     ).to(device)
 
-    criterion = nn.MSELoss()
+    criterion = nn.SmoothL1Loss(beta=1.0)
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     best_loss = float("inf")
@@ -181,7 +182,10 @@ def train_one_fold(
 
             y = label.to(device).float()
             if y.dim() > 0:
-                y = y.view(-1)[0]         # -> scalar tensor
+                y = y.view(-1)[0]
+
+            # ✅ log-time transform
+            y = torch.log1p(torch.clamp(y, min=0.0))
 
             out = model([bag], sample_source=one_hot.unsqueeze(0) if one_hot is not None else None)
             pred = out["risk"].view(-1)[0]   # -> scalar
@@ -234,20 +238,23 @@ def predict_one_patient(model, test_adata, device, use_sample_source=True, retur
             one_hot = None
 
         bag = bag.to(device)
-        y = float(label.item())
+        if bag.dim() == 3:
+            bag = bag.squeeze(0)   # [n_cells, dim]
 
-        # MIL forward expects list of bags
+        y_days = float(label.item())
+
+        # forward (只做一次，而且保留 sample_source)
         out = model(
             [bag],
             sample_source=one_hot.unsqueeze(0) if one_hot is not None else None,
             return_attention=return_attention
         )
-        bag = bag.to(device)
-        if bag.dim() == 3:
-            bag = bag.squeeze(0)
 
-        out = model([bag], return_attention=return_attention)
-        pred = float(out["risk"].view(-1)[0].item())
+        pred_log = float(out["risk"].view(-1)[0].item())
+        pred_days = max(0.0, math.expm1(pred_log))  # ✅ clamp to >=0
+
+        y = y_days
+        pred = pred_days
 
         attn = None
         if return_attention:
@@ -399,6 +406,17 @@ def main():
     print(f"RMSE (days): {rmse:.3f}")
     print(f"Spearman:    {spr:.3f}")
 
+    # ===== log-space metrics (match training objective) =====
+    y_true_log = np.log1p(np.clip(y_true, 0, None))
+    y_pred_log = np.log1p(np.clip(y_pred, 0, None))
+
+    mae_log = float(np.mean(np.abs(y_pred_log - y_true_log)))
+    rmse_log = float(np.sqrt(np.mean((y_pred_log - y_true_log) ** 2)))
+
+    print(f"MAE (log1p days):  {mae_log:.4f}")
+    print(f"RMSE (log1p days): {rmse_log:.4f}")
+    print("===================================================\n")
+    
     cv_results["overall_metrics"] = {
         "mae_days": float(mae),
         "rmse_days": float(rmse),
