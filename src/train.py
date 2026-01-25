@@ -131,29 +131,23 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
 
         # use class weights to address imbalance (compute from TRAIN fold only)
         # ---- FIX 3: compute class weights from TRAIN PATIENTS (patient-level), using frozen label_map ----
+        # y: patient-level int labels in TRAIN fold
         y_pat_raw = np.array([train_dataset.patient_labels[p] for p in train_dataset.patient_list], dtype=str)
         y = np.array([label_map[v] for v in y_pat_raw], dtype=int)
 
-        # handle rare fold where only one class exists (shouldn't happen much in LOOCV, but safe)
         classes_present = np.unique(y)
         if len(classes_present) < num_classes:
-            # fallback: no weighting (or you can set weight=1 for missing class)
+            # 這個 fold 訓練集只有單一類：class weighting 沒意義，直接給全 1
             class_weights = torch.ones(num_classes, device=device)
         else:
             cw = compute_class_weight(class_weight="balanced", classes=np.arange(num_classes), y=y)
-            class_weights = torch.FloatTensor(cw).to(device)
+            class_weights = torch.tensor(cw, dtype=torch.float32, device=device)
 
-        criterion = nn.CrossEntropyLoss(weight=class_weights)
-
-        class_weights = compute_class_weight(class_weight="balanced", classes=np.unique(y), y=y)
-        class_weights = torch.FloatTensor(class_weights).to(device)
-        
-        # Loss function and optimizer
         criterion = nn.CrossEntropyLoss(weight=class_weights)
         optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         
         # Learning rate scheduler
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=20, factor=0.5)
     
 
         # criterion = torch.nn.CrossEntropyLoss()
@@ -164,7 +158,8 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
         # Training setup
         best_train_loss = float("inf")
         epochs_without_improvement = 0
-        patience = 8
+        patience = 20
+        min_delta = 1e-4
 
         history = {
             'train_loss': [],
@@ -191,7 +186,7 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
                     one_hot_sample_source = None
 
                 bags = [bag.to(device) for bag in bags]
-                batch_labels = batch_labels.to(device)
+                batch_labels = batch_labels.to(device).long().view(-1)
 
                 # Forward pass（有 sample_source 才傳）
                 if one_hot_sample_source is not None:
@@ -237,17 +232,14 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
             # })
 
             # early stopping
-            if train_loss < best_train_loss:
+            if best_train_loss - train_loss > min_delta:
                 best_train_loss = train_loss
                 epochs_without_improvement = 0
-
-                #save best model
-                torch.save(model.state_dict(), os.path.join(fold_save_path, 'best_model.pth'))
-
+                torch.save(...)
             else:
                 epochs_without_improvement += 1
                 if epochs_without_improvement >= patience:
-                    print(f'Early stopping after {epoch+1} epochs')
+                    print(f"Early stopping after {epoch+1} epochs")
                     break
         
         # load best model
