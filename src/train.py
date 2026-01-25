@@ -188,6 +188,17 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
 
                 bags = [bag.to(device) for bag in bags]
                 batch_labels = batch_labels.to(device).long().view(-1)
+                
+                # ===== DEBUG: inspect MIL input features (only once) =====
+                if epoch == 0:
+                    x0 = bags[0]  # [num_instances, feature_dim]
+                    print("[DEBUG] bag0 feature stats:",
+                        "shape=", tuple(x0.shape),
+                        "mean=", x0.mean().item(),
+                        "std=", x0.std().item(),
+                        "min=", x0.min().item(),
+                        "max=", x0.max().item())
+                # =========================================================
 
                 # Forward pass（有 sample_source 才傳）
                 if one_hot_sample_source is not None:
