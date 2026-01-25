@@ -247,7 +247,7 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
             if best_train_loss - train_loss > min_delta:
                 best_train_loss = train_loss
                 epochs_without_improvement = 0
-                torch.save(...)
+                torch.save(model.state_dict(), os.path.join(fold_save_path, "best_model.pth"))
             else:
                 epochs_without_improvement += 1
                 if epochs_without_improvement >= patience:
