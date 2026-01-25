@@ -89,7 +89,8 @@ class AttentionMIL(nn.Module):
             
             # Calculate attention scores
             attention_scores = self.attention(instance_features)  # [num_instances, 1]
-            attention_weights = F.softmax(attention_scores, dim=0)  # [num_instances, 1]
+            tau = 0.3
+            attention_weights = F.softmax(attention_scores / tau, dim=0)  # [num_instances, 1]
             
             # Calculate weighted average of instance features
             weighted_features = torch.sum(
