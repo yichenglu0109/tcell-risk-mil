@@ -127,7 +127,7 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
         os.makedirs(fold_save_path, exist_ok=True)
 
         # train model
-        model = AttentionMIL(input_dim=input_dim, num_classes=num_classes, hidden_dim=hidden_dim, dropout=0.25, sample_source_dim=sample_source_dim).to(device)
+        model = AttentionMIL(input_dim=input_dim, num_classes=num_classes, hidden_dim=hidden_dim, dropout=0.25, sample_source_dim=sample_source_dim, topk=50).to(device)
 
         # use class weights to address imbalance (compute from TRAIN fold only)
         # ---- FIX 3: compute class weights from TRAIN PATIENTS (patient-level), using frozen label_map ----

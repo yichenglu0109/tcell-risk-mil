@@ -8,7 +8,7 @@ class AttentionMIL(nn.Module):
     """
     Attention-based Multiple Instance Learning model as used in scMILD
     """
-    def __init__(self, input_dim, num_classes=2, hidden_dim=128, dropout=0.25, sample_source_dim=None):
+    def __init__(self, input_dim, num_classes=2, hidden_dim=128, dropout=0.25, sample_source_dim=None, topk=None):
         """
         Initialize the MIL model
         
@@ -20,6 +20,7 @@ class AttentionMIL(nn.Module):
         """
         super(AttentionMIL, self).__init__()
 
+        self.topk = topk
         self.use_sample_source = sample_source_dim is not None
         self.bag_dim = hidden_dim + (sample_source_dim if self.use_sample_source else 0)
         
@@ -89,8 +90,16 @@ class AttentionMIL(nn.Module):
             
             # Calculate attention scores
             attention_scores = self.attention(instance_features)  # [num_instances, 1]
+            # --- TOP-K (新增) ---
+            scores = attention_scores.view(-1)  # [N]
+            if self.topk is not None and self.topk > 0 and self.topk < scores.numel():
+                k = min(self.topk, scores.numel())
+                top_idx = torch.topk(scores, k=k, largest=True).indices
+                instance_features = instance_features[top_idx]  # [k, hidden_dim]
+                scores = scores[top_idx]                        # [k]
+            # --------------------
             tau = 0.3
-            attention_weights = F.softmax(attention_scores / tau, dim=0)  # [num_instances, 1]
+            attention_weights = F.softmax(attention_scores / tau, dim=0)# [num_instances, 1]
             
             # Calculate weighted average of instance features
             weighted_features = torch.sum(
