@@ -145,7 +145,8 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
 
         criterion = nn.CrossEntropyLoss(weight=class_weights)
         optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-        
+        print("[DEBUG] class_weights (w0,w1):", class_weights.detach().cpu().numpy())
+
         # Learning rate scheduler
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=20, factor=0.5)
     
@@ -287,6 +288,14 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
                 true_label = labels_np[0]
                 pred_label = preds_np[0]
                 pos_prob = probs_np[0, 1] if num_classes == 2 else None
+
+                # ===== DEBUG: why always predict class 1 =====
+                p1 = probs_np[0, 1]
+                l0 = logits[0, 0].item()
+                l1 = logits[0, 1].item()
+                print(f"[DEBUG] test patient={patient_id} true={true_label} pred={pred_label} "
+                    f"p1={p1:.3f} (l1-l0={l1-l0:.3f})")
+                # ============================================
 
                 all_true_labels.append(true_label)
                 all_predicted_labels.append(pred_label)
