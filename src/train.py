@@ -157,7 +157,7 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
 
         
         # Training setup
-        best_train_loss = float("inf")
+        best_train_acc = -1.0
         epochs_without_improvement = 0
         patience = 20
         min_delta = 1e-4
@@ -175,7 +175,7 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
             train_correct = 0
             train_total = 0
 
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
             for batch in train_loader:
                 # 支援 Dataset 回傳 (bag, label, patient) 或 (bag, label, patient, one_hot)
@@ -229,7 +229,7 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
 
 
             # use training loss for scheduler and early stopping since we have no validation set
-            scheduler.step(train_loss)
+            # scheduler.step(train_loss)
 
             # print progress every 20 epochs
             if (epoch + 1) % 20 == 0:
@@ -243,9 +243,9 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
             #     f"patient_{test_patient}/learning_rate": optimizer.param_groups[0]['lr'],
             # })
 
-            # early stopping
-            if best_train_loss - train_loss > min_delta:
-                best_train_loss = train_loss
+            # early stopping + best checkpoint (use train_acc, not train_loss)
+            if train_acc > best_train_acc + min_delta:
+                best_train_acc = train_acc
                 epochs_without_improvement = 0
                 torch.save(model.state_dict(), os.path.join(fold_save_path, "best_model.pth"))
             else:
@@ -253,7 +253,7 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
                 if epochs_without_improvement >= patience:
                     print(f"Early stopping after {epoch+1} epochs")
                     break
-        
+
         # load best model
         model.load_state_dict(torch.load(os.path.join(fold_save_path, 'best_model.pth')))
 
