@@ -498,6 +498,25 @@ def run_pipeline_loocv(input_file, output_dir='results',
     latent_file = os.path.join(ae_dir, "latent_representation.h5ad")
     adata_latent.write(latent_file)
 
+    # ===== DEBUG: label distribution before LOOCV =====
+    print("\n[DEBUG] Label distribution BEFORE LOOCV")
+
+    print("[DEBUG] Cell-level label distribution:")
+    print(adata_latent.obs[label_col].value_counts(dropna=False))
+
+    print("\n[DEBUG] Patient-level label distribution:")
+    print(
+        adata_latent.obs
+        .groupby("patient_id")[label_col]
+        .first()
+        .value_counts(dropna=False)
+    )
+
+    print("[DEBUG] Number of patients:",
+        adata_latent.obs["patient_id"].nunique())
+    print("===============================================\n")
+    # ================================================
+
     # Step 4: Run LOOCV
     print("\n" + "="*80)
     print("STEP 4: RUNNING LEAVE-ONE-OUT CROSS-VALIDATION")
