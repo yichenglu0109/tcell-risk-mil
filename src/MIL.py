@@ -99,13 +99,10 @@ class AttentionMIL(nn.Module):
                 scores = scores[top_idx]                        # [k]
             # --------------------
             tau = 0.3
-            attention_weights = F.softmax(attention_scores / tau, dim=0)# [num_instances, 1]
-            
+            attention_weights = F.softmax(scores / tau, dim=0).unsqueeze(-1)   # [k, 1] 或 [N,1]
             # Calculate weighted average of instance features
-            weighted_features = torch.sum(
-                instance_features * attention_weights, dim=0
-            )  # [hidden_dim]
-
+            weighted_features = torch.sum(instance_features * attention_weights, dim=0)  # [hidden_dim]
+            
             # bag-level feature
             bag_feat = weighted_features  # [hidden_dim]
 
