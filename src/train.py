@@ -537,6 +537,29 @@ def run_pipeline_loocv(input_file, output_dir='results',
     print("===============================================\n")
     # ================================================
 
+    # ===== DEBUG: CD19 relapse phenotype distribution =====
+    print("\n[DEBUG] CD19 phenotype (cell-level):")
+    print(adata_latent.obs["relapse_phenotype"].value_counts(dropna=False))
+
+    print("\n[DEBUG] CD19 phenotype (patient-level):")
+    print(
+        adata_latent.obs
+        .groupby("patient_id")["relapse_phenotype"]
+        .first()
+        .value_counts(dropna=False)
+    )
+    print("===============================================\n")
+
+    # ===== Create binary CD19 relapse label =====
+    if "relapse_phenotype" in adata_latent.obs.columns:
+        rp = adata_latent.obs["relapse_phenotype"].astype(str).str.strip()
+
+        adata_latent.obs["CD19_neg_relapse"] = rp.map({
+            "CD19neg": 1,
+            "CD19pos": 0
+        })
+    # ===========================================
+
     # Step 4: Run LOOCV
     print("\n" + "="*80)
     print("STEP 4: RUNNING LEAVE-ONE-OUT CROSS-VALIDATION")
