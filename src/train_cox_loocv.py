@@ -264,8 +264,8 @@ def main():
     print("\n===== Cox LOOCV Results =====")
     print(f"C-index (simple): {ci:.4f}")
     print(f"C-index (simple, flipped): {ci_flip:.4f}")
-    print(f"C-index (lifelines): {ci_ll:.4f}")
-    print(f"C-index (lifelines, flipped): {ci_ll_flip:.4f}")
+    # print(f"C-index (lifelines): {ci_ll:.4f}")
+    # print(f"C-index (lifelines, flipped): {ci_ll_flip:.4f}")
     print("=============================\n")
     
     results = {
