@@ -9,8 +9,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import LeaveOneOut
 from sklearn.metrics import (
     roc_auc_score, average_precision_score, accuracy_score,
-    confusion_matrix, precision_score, recall_score, f1_score,
-    classification_report, balanced_accuracy_score
+    confusion_matrix, precision_recall_fscore_support
 )
 
 from src.Dataset import PatientBagDataset
@@ -144,36 +143,41 @@ def main():
         y_prob[test_idx[0]] = float(p1)
         y_pred[test_idx[0]] = int(p1 >= 0.5)
 
-    # ---- threshold-free metrics ----
-    auroc = safe_metric(roc_auc_score, y, y_prob)
-    ap_score = safe_metric(average_precision_score, y, y_prob)
-
-    # ---- threshold-dependent metrics (0.5) ----
+    # ---- metrics ----
     acc = accuracy_score(y, y_pred)
-    bal_acc = balanced_accuracy_score(y, y_pred)
-    prec = precision_score(y, y_pred, zero_division=0)
-    rec = recall_score(y, y_pred, zero_division=0)
-    f1 = f1_score(y, y_pred, zero_division=0)
+    n_correct = int((y_pred == y).sum())
+    n_total = int(len(y))
+
+    overall_auc = safe_metric(roc_auc_score, y, y_prob)
+    overall_pr_auc = safe_metric(average_precision_score, y, y_prob)
+
+    # "Overall Precision/Recall/F1" as in your screenshot: for positive class (1)
+    overall_precision, overall_recall, overall_f1, _ = precision_recall_fscore_support(
+        y, y_pred, average="binary", pos_label=1, zero_division=0
+    )
+
     cm = confusion_matrix(y, y_pred)
 
-    print(f"\n[RESULT] LOOCV AUROC: {auroc:.4f}" if np.isfinite(auroc) else "\n[RESULT] LOOCV AUROC: NA (single-class?)")
-    print(f"[RESULT] LOOCV PR-AUC: {ap_score:.4f}" if np.isfinite(ap_score) else "[RESULT] LOOCV PR-AUC: NA (single-class?)")
-    print(f"[RESULT] LOOCV Accuracy: {acc:.4f}")
-    print(f"[RESULT] LOOCV Balanced Accuracy: {bal_acc:.4f}")
-    print(f"[RESULT] LOOCV Precision (class=1): {prec:.4f}")
-    print(f"[RESULT] LOOCV Recall (class=1): {rec:.4f}")
-    print(f"[RESULT] LOOCV F1 (class=1): {f1:.4f}")
+    # class-specific precision/recall/support
+    prec_by_class, rec_by_class, f1_by_class, support_by_class = precision_recall_fscore_support(
+        y, y_pred, labels=[0, 1], average=None, zero_division=0
+    )
 
-    print("\n===== Confusion Matrix (rows=true, cols=pred) =====")
+    # ---- print in your preferred format ----
+    print("\n===== LOOCV Final Results =====")
+    print(f"Overall Accuracy: {acc:.4f} ({n_correct}/{n_total} patients correct)")
+    print(f"Overall Precision: {overall_precision:.4f}")
+    print(f"Overall Recall: {overall_recall:.4f}")
+    print(f"Overall F1 Score: {overall_f1:.4f}")
+    print(f"Overall AUC: {overall_auc:.4f}" if np.isfinite(overall_auc) else "Overall AUC: NA")
+    print(f"Overall PR-AUC: {overall_pr_auc:.4f}" if np.isfinite(overall_pr_auc) else "Overall PR-AUC: NA")
+
+    print("\nConfusion Matrix:")
     print(cm)
 
-    print("\n===== Classification report =====")
-    print(classification_report(
-        y, y_pred,
-        target_names=["class_0", "class_1"],
-        digits=4,
-        zero_division=0
-    ))
+    print("\nClass-specific Metrics:")
+    print(f"class_0: Precision={prec_by_class[0]:.4f}, Recall={rec_by_class[0]:.4f}, Count={int(support_by_class[0])}")
+    print(f"class_1: Precision={prec_by_class[1]:.4f}, Recall={rec_by_class[1]:.4f}, Count={int(support_by_class[1])}")
 
     # ---- save predictions ----
     out = pd.DataFrame({
@@ -183,7 +187,7 @@ def main():
         "y_pred": y_pred,
     }).sort_values("patient_id")
     out.to_csv(args.out_csv, index=False)
-    print(f"[INFO] Saved predictions to: {args.out_csv}")
+    print(f"\n[INFO] Saved predictions to: {args.out_csv}")
 
     # ---- optional: save metrics json ----
     if args.out_json is not None:
@@ -192,14 +196,27 @@ def main():
             "feature_dim": int(X.shape[1]),
             "class_counts": {str(k): int(v) for k, v in pd.Series(y).value_counts().to_dict().items()},
             "normalization": "(X-0.5)*2" if do_norm else "OFF",
-            "auroc": None if not np.isfinite(auroc) else float(auroc),
-            "pr_auc": None if not np.isfinite(ap_score) else float(ap_score),
             "accuracy": float(acc),
-            "balanced_accuracy": float(bal_acc),
-            "precision_pos": float(prec),
-            "recall_pos": float(rec),
-            "f1_pos": float(f1),
+            "n_correct": int(n_correct),
+            "n_total": int(n_total),
+            "precision_pos": float(overall_precision),
+            "recall_pos": float(overall_recall),
+            "f1_pos": float(overall_f1),
+            "auroc": None if not np.isfinite(overall_auc) else float(overall_auc),
+            "pr_auc": None if not np.isfinite(overall_pr_auc) else float(overall_pr_auc),
             "confusion_matrix": cm.tolist(),
+            "class_0": {
+                "precision": float(prec_by_class[0]),
+                "recall": float(rec_by_class[0]),
+                "f1": float(f1_by_class[0]),
+                "count": int(support_by_class[0]),
+            },
+            "class_1": {
+                "precision": float(prec_by_class[1]),
+                "recall": float(rec_by_class[1]),
+                "f1": float(f1_by_class[1]),
+                "count": int(support_by_class[1]),
+            },
         }
         with open(args.out_json, "w") as f:
             json.dump(metrics, f, indent=2)
