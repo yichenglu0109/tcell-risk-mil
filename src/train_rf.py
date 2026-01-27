@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import numpy as np
 import pandas as pd
 import scanpy as sc
 
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import roc_auc_score, average_precision_score, accuracy_score
 from sklearn.model_selection import LeaveOneOut
+from sklearn.metrics import (
+    roc_auc_score, average_precision_score, accuracy_score,
+    confusion_matrix, precision_score, recall_score, f1_score,
+    classification_report, balanced_accuracy_score
+)
 
 from src.Dataset import PatientBagDataset
 
@@ -29,7 +34,7 @@ def main():
     ap.add_argument("--patient_col", default="patient_id")
     ap.add_argument("--label_col", required=True, help="Binary label column in adata.obs")
     ap.add_argument("--label_map", default=None,
-                    help='Optional JSON mapping, e.g. \'{"NR":0,"OR":1}\' (string)')
+                    help='Optional JSON mapping, e.g. \'{"NO":0,"YES":1}\' (string)')
 
     # Normalize to match your load_and_explore_data(): (X-0.5)*2
     ap.add_argument("--normalize", action="store_true", default=True,
@@ -51,6 +56,8 @@ def main():
     ap.add_argument("--n_jobs", type=int, default=-1)
 
     ap.add_argument("--out_csv", default="rf_loocv_predictions.csv")
+    ap.add_argument("--out_json", default=None,
+                    help="Optional: save summary metrics to JSON (e.g. results_rf/rf_metrics.json)")
     args = ap.parse_args()
 
     # ---- load ----
@@ -59,13 +66,11 @@ def main():
     # ---- normalize ----
     do_norm = args.normalize and (not args.no_normalize)
     if do_norm:
-        # matches your load_and_explore_data()
         adata.X = (adata.X - 0.5) * 2
 
     # ---- label_map ----
     label_map = None
     if args.label_map is not None:
-        import json
         label_map = json.loads(args.label_map)
 
     # ---- dataset (patient bags) ----
@@ -139,14 +144,38 @@ def main():
         y_prob[test_idx[0]] = float(p1)
         y_pred[test_idx[0]] = int(p1 >= 0.5)
 
+    # ---- threshold-free metrics ----
     auroc = safe_metric(roc_auc_score, y, y_prob)
     ap_score = safe_metric(average_precision_score, y, y_prob)
-    acc = accuracy_score(y, y_pred)
 
-    print(f"[RESULT] LOOCV AUROC: {auroc:.4f}" if np.isfinite(auroc) else "[RESULT] LOOCV AUROC: NA (single-class?)")
+    # ---- threshold-dependent metrics (0.5) ----
+    acc = accuracy_score(y, y_pred)
+    bal_acc = balanced_accuracy_score(y, y_pred)
+    prec = precision_score(y, y_pred, zero_division=0)
+    rec = recall_score(y, y_pred, zero_division=0)
+    f1 = f1_score(y, y_pred, zero_division=0)
+    cm = confusion_matrix(y, y_pred)
+
+    print(f"\n[RESULT] LOOCV AUROC: {auroc:.4f}" if np.isfinite(auroc) else "\n[RESULT] LOOCV AUROC: NA (single-class?)")
     print(f"[RESULT] LOOCV PR-AUC: {ap_score:.4f}" if np.isfinite(ap_score) else "[RESULT] LOOCV PR-AUC: NA (single-class?)")
     print(f"[RESULT] LOOCV Accuracy: {acc:.4f}")
+    print(f"[RESULT] LOOCV Balanced Accuracy: {bal_acc:.4f}")
+    print(f"[RESULT] LOOCV Precision (class=1): {prec:.4f}")
+    print(f"[RESULT] LOOCV Recall (class=1): {rec:.4f}")
+    print(f"[RESULT] LOOCV F1 (class=1): {f1:.4f}")
 
+    print("\n===== Confusion Matrix (rows=true, cols=pred) =====")
+    print(cm)
+
+    print("\n===== Classification report =====")
+    print(classification_report(
+        y, y_pred,
+        target_names=["class_0", "class_1"],
+        digits=4,
+        zero_division=0
+    ))
+
+    # ---- save predictions ----
     out = pd.DataFrame({
         "patient_id": pids,
         "y_true": y,
@@ -155,6 +184,26 @@ def main():
     }).sort_values("patient_id")
     out.to_csv(args.out_csv, index=False)
     print(f"[INFO] Saved predictions to: {args.out_csv}")
+
+    # ---- optional: save metrics json ----
+    if args.out_json is not None:
+        metrics = {
+            "patients_used": int(len(pids)),
+            "feature_dim": int(X.shape[1]),
+            "class_counts": {str(k): int(v) for k, v in pd.Series(y).value_counts().to_dict().items()},
+            "normalization": "(X-0.5)*2" if do_norm else "OFF",
+            "auroc": None if not np.isfinite(auroc) else float(auroc),
+            "pr_auc": None if not np.isfinite(ap_score) else float(ap_score),
+            "accuracy": float(acc),
+            "balanced_accuracy": float(bal_acc),
+            "precision_pos": float(prec),
+            "recall_pos": float(rec),
+            "f1_pos": float(f1),
+            "confusion_matrix": cm.tolist(),
+        }
+        with open(args.out_json, "w") as f:
+            json.dump(metrics, f, indent=2)
+        print(f"[INFO] Saved metrics to: {args.out_json}")
 
 
 if __name__ == "__main__":
