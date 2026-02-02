@@ -17,7 +17,7 @@ from src.MIL import AttentionMIL
 # define a leave one out cross validation function
 def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=128, sample_source_dim=4,
                                   num_epochs=50, learning_rate=5e-4, weight_decay = 1e-2, 
-                                  save_path='results', label_col="Response_3m", pos_label="R", neg_label="NR",):
+                                  save_path='results', label_col="Response_3m", pos_label="R", neg_label="NR", aggregator="attention", topk=0, tau=0.0):
     """
     Perform leave-one-out cross-validation for the MIL model
     # Parameters:
@@ -126,8 +126,12 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
         fold_save_path = os.path.join(save_path, f'patient_{test_patient}')
         os.makedirs(fold_save_path, exist_ok=True)
 
+        # parse optional topk and tau
+        _topk = int(topk) if (topk is not None and int(topk) > 0) else None
+        _tau  = float(tau) if (tau is not None and float(tau) > 0) else None
+
         # train model
-        model = AttentionMIL(input_dim=input_dim, num_classes=num_classes, hidden_dim=hidden_dim, dropout=0.25, sample_source_dim=sample_source_dim, topk=50).to(device)
+        model = AttentionMIL(input_dim=input_dim, num_classes=num_classes, hidden_dim=hidden_dim, dropout=0.25, sample_source_dim=sample_source_dim, aggregator=aggregator, topk=_topk, tau=_tau).to(device)
 
         # use class weights to address imbalance (compute from TRAIN fold only)
         # ---- FIX 3: compute class weights from TRAIN PATIENTS (patient-level), using frozen label_map ----
@@ -187,6 +191,9 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
                     one_hot_sample_source = None
 
                 bags = [bag.to(device) for bag in bags]
+                if aggregator == "pseudobulk":
+                    bags = [bag.mean(dim=0) for bag in bags]   # [input_dim]
+
                 batch_labels = batch_labels.to(device).long().view(-1)
                 
                 # ===== DEBUG: inspect MIL input features (only once) =====
@@ -275,18 +282,28 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
                 else:
                     bags, batch_labels, patient_ids = batch
                     one_hot_sample_source = None
+                
+                patient_id = patient_ids[0]  
 
                 bags = [bag.to(device) for bag in bags]
+                if aggregator == "pseudobulk":
+                    bags = [bag.mean(dim=0) for bag in bags]   # [input_dim]
                 batch_labels = batch_labels.to(device)
 
                 # Forward pass（有 sample_source 才傳）
+                want_attn = (model.aggregator == "attention")
+
                 if one_hot_sample_source is not None:
-                    out = model(bags, sample_source=one_hot_sample_source, return_attention=True)
+                    out = model(bags, sample_source=one_hot_sample_source, return_attention=want_attn)
                 else:
-                    out = model(bags, return_attention=True)
+                    out = model(bags, return_attention=want_attn)
 
                 logits = out["logits"]
-                attn_weights = out["attn"]
+                if want_attn and ("attn" in out):
+                    attn_weights = out["attn"]
+                    cv_results['attention_weights'][patient_id] = [
+                        (w.cpu().numpy() if w is not None else None) for w in attn_weights
+                    ]
 
                 probs = F.softmax(logits, dim=1)
                 _, preds = torch.max(logits, 1)
@@ -319,9 +336,6 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
                     'probabilities': probs_np[0].tolist(),
                     'correct': (pred_label == true_label)
                 }
-
-                cv_results['attention_weights'][patient_id] = [w.cpu().numpy() for w in attn_weights]
-
 
                 # Add to wandb table
                 # wandb_patient_table.add_data(
@@ -440,7 +454,8 @@ def run_pipeline_loocv(input_file, output_dir='results',
                        latent_dim=64, num_epochs_ae=200,
                        num_epochs=50, num_classes=2,
                        hidden_dim=128, sample_source_dim=None,
-                       project_name="car-t-response", label_col="Response_3m", pos_label="R", neg_label="NR"):
+                       project_name="car-t-response", label_col="Response_3m", pos_label="R", neg_label="NR",
+                       aggregator="attention", topk=0, tau=0.0):
     """run complete pipeline with leave one out cross validation
     
     Parameters:
@@ -593,7 +608,10 @@ def run_pipeline_loocv(input_file, output_dir='results',
         save_path = mil_dir,
         label_col = label_col,
         pos_label = pos_label,
-        neg_label = neg_label
+        neg_label = neg_label,
+        aggregator=aggregator,
+        topk=topk,
+        tau=tau,
     )
         
 

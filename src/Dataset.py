@@ -131,7 +131,8 @@ class PatientBagDataset(Dataset):
         label_map=None,  # optional: {"NR":0,"OR":1} or custom
         drop_missing=True,
         use_sample_source=True,  # keep your one-hot covariate
-        sample_source_col="Sample_source"
+        sample_source_col="Sample_source",
+        pooling=None
     ):
         """
         Initialize the MIL dataset
@@ -149,9 +150,10 @@ class PatientBagDataset(Dataset):
         self.event_col = event_col
         self.label_map = label_map
         self.drop_missing = drop_missing
-        
+        self.pooling = pooling
+
         # Always define metadata dict (avoid attribute missing)
-        self.patient_metadata = None
+        self.patient_metadata = {}
         self.sample_sources = None
 
         # # ---- sanity checks ----
@@ -455,6 +457,8 @@ class PatientBagSurvivalDataset(Dataset):
         bag = torch.tensor(self.patient_bags[pid], dtype=torch.float32)
         t = torch.tensor(float(self.time_days[idx]), dtype=torch.float32)
         e = torch.tensor(int(self.event[idx]), dtype=torch.float32)
+        if self.pooling == "mean":
+            bag = bag.mean(dim=0, keepdim=True)
         return bag, t, e, pid
 
 
