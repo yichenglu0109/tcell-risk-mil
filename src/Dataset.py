@@ -132,7 +132,7 @@ class PatientBagDataset(Dataset):
         drop_missing=True,
         use_sample_source=True,  # keep your one-hot covariate
         sample_source_col="Sample_source",
-        pooling=None
+        pooling=None 
     ):
         """
         Initialize the MIL dataset
@@ -418,9 +418,11 @@ class PatientBagSurvivalDataset(Dataset):
         fu_col="follow_up_duration_months",
         days_per_month=DAYS_PER_MONTH,
         drop_inconsistent=True,
+        pooling=None,
     ):
         self.adata = adata
         self.patient_col = patient_col
+        self.pooling = pooling
 
         patients, time_days, event = build_patient_survival_table(
             adata.obs,
