@@ -615,11 +615,4 @@ def run_pipeline_loocv(input_file, output_dir='results',
         "results_dir": result_dir,
     }
 
-        'adata': adata,
-        'autoencoder': model,
-        'latent_data': adata_latent,
-        'mil_results': cv_results,
-        'results_dir': result_dir
-    }
-
 
