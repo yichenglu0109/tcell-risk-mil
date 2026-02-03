@@ -62,9 +62,13 @@ class CoxPHLoss(nn.Module):
 
 
 @torch.no_grad()
-def predict_risk(model, bag, device):
+def predict_risk(model, bag, device, aggregator="attention"):
     model.eval()
-    out = model([bag.to(device)])
+    b = bag.to(device)
+    if aggregator == "pseudobulk":
+        b = b.mean(dim=0)  # [input_dim]
+    out = model([b])
+
     # AttentionMIL already returns out["risk"] in your codebase
     r = out["risk"].squeeze(0)  # scalar
     return float(r.item())
@@ -96,18 +100,25 @@ def c_index(time, event, risk):
 
 
 def train_one_fold(train_ds, input_dim, hidden_dim, dropout, device,
-                   epochs=80, lr=5e-4, weight_decay=1e-2, batch_size=8, patience=10, seed=1):
+                   epochs=80, lr=5e-4, weight_decay=1e-2, batch_size=8,
+                   patience=10, seed=1,
+                   aggregator="attention", topk=0, tau=0.0):
     torch.manual_seed(seed)
     np.random.seed(seed)
 
     loader = DataLoader(train_ds, batch_size=len(train_ds), shuffle=False, collate_fn=collate_survival)
 
+    _topk = int(topk) if (topk is not None and int(topk) > 0) else None
+    _tau  = float(tau) if (tau is not None and float(tau) > 0) else None
+
     model = AttentionMIL(
         input_dim=input_dim,
-        num_classes=2,  # not used for Cox; but constructor needs it
+        num_classes=2,
         hidden_dim=hidden_dim,
         dropout=dropout,
         sample_source_dim=None,
+        topk=_topk,
+        tau=_tau,
     ).to(device)
 
     loss_fn = CoxPHLoss()
@@ -125,6 +136,8 @@ def train_one_fold(train_ds, input_dim, hidden_dim, dropout, device,
         for bags, times, events, _pids in loader:
             # forward (bags is list)
             bags = [b.to(device) for b in bags]
+            if aggregator == "pseudobulk":
+                bags = [bag.mean(dim=0) for bag in bags]   # [input_dim]
             out = model(bags)
             risk = out["risk"].view(-1)  # [B]
 
@@ -177,7 +190,17 @@ def main():
     ap.add_argument("--weight_decay", type=float, default=1e-2)
     ap.add_argument("--batch_size", type=int, default=8)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--aggregator", default="attention", choices=["attention", "pseudobulk"])
+    ap.add_argument("--topk", type=int, default=0)
+    ap.add_argument("--tau", type=float, default=0.0)
     args = ap.parse_args()
+
+    # ✅ guard: pseudobulk 不該用 topk/tau（沒意義）
+    if args.aggregator == "pseudobulk":
+        if args.topk != 0 or args.tau != 0.0:
+            print("[WARN] pseudobulk ignores topk/tau; forcing topk=0, tau=0.0")
+        args.topk = 0
+        args.tau = 0.0
 
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -236,6 +259,9 @@ def main():
             batch_size=args.batch_size,
             patience=args.patience,
             seed=args.seed,
+            aggregator=args.aggregator,
+            topk=args.topk,
+            tau=args.tau,
         )
 
         # get the held-out patient's bag + (t,e) computed from its own obs
@@ -250,7 +276,7 @@ def main():
         )
         # should be exactly 1 patient
         bag, t, e, pid = test_ds[0]
-        r = predict_risk(model, bag, device)
+        r = predict_risk(model, bag, device, aggregator=args.aggregator)
         risks.append(r)
 
     risks = np.array(risks, float)
