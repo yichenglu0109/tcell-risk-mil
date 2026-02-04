@@ -453,9 +453,9 @@ def run_pipeline_loocv(input_file, output_dir='results',
                        latent_dim=64, num_epochs_ae=200,
                        num_epochs=50, num_classes=2,
                        hidden_dim=128, sample_source_dim=None,
-                       project_name="car-t-response", label_col="Response_3m",
-                       pos_label="R", neg_label="NR",
+                       project_name="car-t-response", label_col="Response_3m", pos_label="R", neg_label="NR",
                        aggregator="attention", topk=0, tau=0.0):
+    """run complete pipeline with leave one out cross validation"""
 
     # Create output directories
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -473,21 +473,22 @@ def run_pipeline_loocv(input_file, output_dir='results',
     print("="*80)
     adata = load_and_explore_data(input_file)
 
-    # ===== DEBUG: raw input quick checks =====
+    # -------------------------
+    # DEBUG A: raw input sanity
+    # -------------------------
     print("\n[DEBUG] Raw input sanity")
-    print("[DEBUG] adata shape:", adata.n_obs, "cells x", adata.n_vars, "features")
+    print(f"[DEBUG] adata shape: {adata.n_obs} cells x {adata.n_vars} features")
     if "patient_id" in adata.obs.columns:
-        print("[DEBUG] n_patients:", adata.obs["patient_id"].astype(str).nunique())
-    print("[DEBUG] obs columns (head 30):", list(adata.obs.columns)[:30])
+        print(f"[DEBUG] n_patients: {adata.obs['patient_id'].nunique()}")
+    print(f"[DEBUG] obs columns (head 30): {list(adata.obs.columns)[:30]}")
+
     if label_col in adata.obs.columns:
-        print("[DEBUG] raw cell-level label counts:")
-        print(adata.obs[label_col].value_counts(dropna=False))
-        print("[DEBUG] raw patient-level label counts (first per patient):")
-        print(adata.obs.groupby("patient_id")[label_col].first().value_counts(dropna=False))
+        print(f"[DEBUG] raw cell-level label counts:\n{adata.obs[label_col].value_counts(dropna=False)}")
+        pt_raw = adata.obs.groupby("patient_id")[label_col].first()
+        print(f"[DEBUG] raw patient-level label counts (first per patient):\n{pt_raw.value_counts(dropna=False)}")
     else:
-        print(f"[DEBUG] raw data missing label_col='{label_col}' (OK if you add later)")
+        print(f"[DEBUG] label_col='{label_col}' not in raw adata.obs")
     print("===============================================\n")
-    # ===========================================
 
     # Step 2: preprocess for AE
     print("\n" + "="*80)
@@ -506,49 +507,94 @@ def run_pipeline_loocv(input_file, output_dir='results',
         model, test_loader, adata, adata.var_names.tolist(), save_path=ae_dir
     )
 
-    # Save latent
+    # Save latent representations
     latent_file = os.path.join(ae_dir, "latent_representation.h5ad")
     adata_latent.write(latent_file)
 
-    # ===== DEBUG: label distribution before LOOCV =====
+    # -------------------------------------------------------
+    # DEBUG B: distribution BEFORE LOOCV (cell + patient-level)
+    # -------------------------------------------------------
     print("\n[DEBUG] Label distribution BEFORE LOOCV")
 
-    if label_col in adata_latent.obs.columns:
+    if label_col not in adata_latent.obs.columns:
+        print(f"[DEBUG] ERROR: '{label_col}' not found in adata_latent.obs")
+    else:
         print("[DEBUG] Cell-level label distribution:")
         print(adata_latent.obs[label_col].value_counts(dropna=False))
 
-        print("\n[DEBUG] Patient-level label distribution (first per patient):")
         pt = adata_latent.obs.groupby("patient_id")[label_col].first()
+        print("\n[DEBUG] Patient-level label distribution (first per patient):")
         print(pt.value_counts(dropna=False))
 
-        # 重要：檢查「同一病人」label 是否一致（如果不一致會造成你看到 weird 行為）
-        # 這段不需要任何額外 function
-        per_patient_nuniq = adata_latent.obs.groupby("patient_id")[label_col].nunique(dropna=True)
-        n_inconsistent = int((per_patient_nuniq > 1).sum())
-        print("\n[DEBUG] Patients with >1 unique label (inconsistent within patient):", n_inconsistent)
-        if n_inconsistent > 0:
-            bad_pids = per_patient_nuniq[per_patient_nuniq > 1].index.tolist()[:10]
-            print("[DEBUG] Example inconsistent patient_ids (first 10):", bad_pids)
-    else:
-        print(f"[DEBUG] '{label_col}' not found in adata_latent.obs")
-    print("[DEBUG] Number of patients:", adata_latent.obs["patient_id"].astype(str).nunique())
-    print("===============================================\n")
-    # ================================================
+        # ✅ 你要的：只看同一批 non-NaN 病人（51）
+        pt_valid = pt.dropna()
+        print("\n[DEBUG] Patient-level label distribution (NON-NaN patients only):")
+        print(pt_valid.value_counts(dropna=False))
+        print(f"[DEBUG] NON-NaN patient count: {pt_valid.shape[0]}")
 
-    # （可選）你原本那段 CD19 phenotype debug：保留，但加 guard
+        # ✅ 列出 NaN 病人有哪些（避免你一直覺得 “哪 54 個？”）
+        nan_pids = pt[pt.isna()].index.astype(str).tolist()
+        print(f"\n[DEBUG] NaN patients (n={len(nan_pids)}). First 30:")
+        print(nan_pids[:30])
+
+    print("===============================================\n")
+
+    # -------------------------------------------------------
+    # DEBUG C: specifically for relapse_gt200 vs relapse_gt300
+    # -------------------------------------------------------
+    # 你現在的痛點就是這個，所以我直接把它寫死成 debug（不改任何 function arg）
+    if ("relapse_gt200" in adata_latent.obs.columns) and ("relapse_gt300" in adata_latent.obs.columns):
+        print("\n[DEBUG] Compare relapse_gt200 vs relapse_gt300 (patient-level, SAME patient set)")
+
+        pt200 = adata_latent.obs.groupby("patient_id")["relapse_gt200"].first()
+        pt300 = adata_latent.obs.groupby("patient_id")["relapse_gt300"].first()
+
+        # ✅ 只在同一批「兩者都不是 NaN」的病人上比較
+        mask = pt200.notna() & pt300.notna()
+        pids_both = pt200.index[mask].astype(str).tolist()
+
+        print(f"[DEBUG] Patients with BOTH non-NaN labels: {len(pids_both)}")
+
+        # 分布（只在這批人上）
+        print("\n[DEBUG] relapse_gt200 distribution on BOTH-non-NaN patients:")
+        print(pt200.loc[mask].value_counts(dropna=False))
+
+        print("\n[DEBUG] relapse_gt300 distribution on BOTH-non-NaN patients:")
+        print(pt300.loc[mask].value_counts(dropna=False))
+
+        # ✅ 最關鍵：直接列出「哪一些病人 gt200 != gt300」
+        diff = (pt200.loc[mask] != pt300.loc[mask])
+        diff_pids = diff[diff].index.astype(str).tolist()
+
+        print(f"\n[DEBUG] Patients where gt200 != gt300: {len(diff_pids)}")
+        if len(diff_pids) > 0:
+            show = diff_pids[:50]
+            df_show = pd.DataFrame({
+                "patient_id": show,
+                "relapse_gt200": pt200.loc[show].astype(str).values,
+                "relapse_gt300": pt300.loc[show].astype(str).values,
+            })
+            print(df_show.to_string(index=False))
+        else:
+            print("[DEBUG] No patient-level differences between gt200 and gt300 on BOTH-non-NaN set.")
+
+        print("===============================================\n")
+    else:
+        print("\n[DEBUG] relapse_gt200/relapse_gt300 columns not both present; skipping gt200 vs gt300 debug.\n")
+
+    # (Optional) your existing phenotype prints (keep unchanged)
     if "relapse_phenotype" in adata_latent.obs.columns:
         print("\n[DEBUG] relapse_phenotype (cell-level):")
         print(adata_latent.obs["relapse_phenotype"].value_counts(dropna=False))
 
         print("\n[DEBUG] relapse_phenotype (patient-level first):")
         print(
-            adata_latent.obs.groupby("patient_id")["relapse_phenotype"].first().value_counts(dropna=False)
+            adata_latent.obs
+            .groupby("patient_id")["relapse_phenotype"]
+            .first()
+            .value_counts(dropna=False)
         )
         print("===============================================\n")
-
-        # Create binary CD19 relapse label
-        rp = adata_latent.obs["relapse_phenotype"].astype(str).str.strip()
-        adata_latent.obs["CD19_neg_relapse"] = rp.map({"CD19neg": 1, "CD19pos": 0})
 
     # Step 4: LOOCV
     print("\n" + "="*80)
@@ -559,22 +605,11 @@ def run_pipeline_loocv(input_file, output_dir='results',
         print(f"ERROR: '{label_col}' column not found in the data. Cannot proceed with MIL.")
         return None
 
-    # ===== DEBUG: how many patients will be dropped for missing labels =====
-    patients_with_missing = adata_latent.obs.loc[
-        adata_latent.obs[label_col].isna(), "patient_id"
-    ].astype(str).unique()
-
-    print("[DEBUG] patients with missing label:", len(patients_with_missing))
+    # Remove patients with NaN responses (this is your existing logic)
+    patients_with_missing = adata_latent.obs[adata_latent.obs[label_col].isna()]['patient_id'].unique()
     if len(patients_with_missing) > 0:
-        print("[DEBUG] example missing-label patient_ids (first 20):", list(patients_with_missing)[:20])
-
-        # filter
-        adata_latent = adata_latent[~adata_latent.obs["patient_id"].astype(str).isin(patients_with_missing)].copy()
-
-    print("[DEBUG] after filtering: n_patients =", adata_latent.obs["patient_id"].astype(str).nunique(),
-          "| n_cells =", adata_latent.n_obs)
-    print("===============================================\n")
-    # ===============================================
+        print(f"Removing {len(patients_with_missing)} patients with missing responses")
+        adata_latent = adata_latent[~adata_latent.obs['patient_id'].isin(patients_with_missing)].copy()
 
     cv_results = leave_one_out_cross_validation(
         adata_latent,
@@ -595,11 +630,11 @@ def run_pipeline_loocv(input_file, output_dir='results',
     print(f"Pipeline completed successfully! Results saved to {result_dir}")
 
     return {
-        "adata": adata,
-        "autoencoder": model,
-        "latent_data": adata_latent,
-        "mil_results": cv_results,
-        "results_dir": result_dir,
+        'adata': adata,
+        'autoencoder': model,
+        'latent_data': adata_latent,
+        'mil_results': cv_results,
+        'results_dir': result_dir
     }
 
 
