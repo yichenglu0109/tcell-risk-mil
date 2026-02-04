@@ -455,177 +455,166 @@ def run_pipeline_loocv(input_file, output_dir='results',
                        hidden_dim=128, sample_source_dim=None,
                        project_name="car-t-response", label_col="Response_3m", pos_label="R", neg_label="NR",
                        aggregator="attention", topk=0, tau=0.0):
-    """run complete pipeline with leave one out cross validation"""
+    """run complete pipeline with leave one out cross validation
+    
+    Parameters:
+    - input_file: path to input file
+    - output_dir: directory to save results
+    - latent_dim: dimension of latent space
+    - num_epochs_ae: number of epochs for autoencoder
+    - num_epoch_mil: number of epochs for MIL
+    - num_classes: number of classes
+    - hidden_dim: dimension of hidden layer
+
+    Returns:
+    - dict of results and models
+    """
+
+    # config = {
+    #     "input_file": input_file,
+    #     "output_dir": output_dir,
+    #     "latent_dim": latent_dim,
+    #     "num_epochs_ae": num_epochs_ae,
+    #     "num_epochs_mil": num_epochs,
+    #     "num_classes": num_classes,
+    #     "hidden_dim": hidden_dim,
+    #     "cv_method": "leave-one-out"
+    # }
+
+    # wandb.init(project=project_name, config=config)
 
     # Create output directories
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     result_dir = os.path.join(output_dir, f"run_{timestamp}")
     ae_dir = os.path.join(result_dir, "autoencoder")
     mil_dir = os.path.join(result_dir, "mil")
-
+    
     os.makedirs(result_dir, exist_ok=True)
     os.makedirs(ae_dir, exist_ok=True)
     os.makedirs(mil_dir, exist_ok=True)
-
+    
+    
     # Step 1: Load and explore data
     print("\n" + "="*80)
     print("STEP 1: LOADING AND EXPLORING DATA")
     print("="*80)
     adata = load_and_explore_data(input_file)
 
-    # -------------------------
-    # DEBUG A: raw input sanity
-    # -------------------------
-    print("\n[DEBUG] Raw input sanity")
-    print(f"[DEBUG] adata shape: {adata.n_obs} cells x {adata.n_vars} features")
-    if "patient_id" in adata.obs.columns:
-        print(f"[DEBUG] n_patients: {adata.obs['patient_id'].nunique()}")
-    print(f"[DEBUG] obs columns (head 30): {list(adata.obs.columns)[:30]}")
+    # wandb.config.update({
+    #     "cells": adata.n_obs,
+    #     "TFs": adata.n_vars,
+    #     "patients": adata.obs["patient_id"].nunique()
+    # })
 
-    if label_col in adata.obs.columns:
-        print(f"[DEBUG] raw cell-level label counts:\n{adata.obs[label_col].value_counts(dropna=False)}")
-        pt_raw = adata.obs.groupby("patient_id")[label_col].first()
-        print(f"[DEBUG] raw patient-level label counts (first per patient):\n{pt_raw.value_counts(dropna=False)}")
-    else:
-        print(f"[DEBUG] label_col='{label_col}' not in raw adata.obs")
-    print("===============================================\n")
+    # if "Response_3m" in adata.obs.columns:
+    #     wandb.config.update({
+    #         "Response_distribution": dict(adata.obs["Response_3m"].value_counts())
+    #     })
 
-    # Step 2: preprocess for AE
+    # step 2: train autoencoder
     print("\n" + "="*80)
-    print("STEP 2: PREPROCESSING FOR AUTOENCODER")
+    print("STEP 2: TRAINING AUTOENCODER")
     print("="*80)
     train_loader, val_loader, test_loader, input_dim = preprocess_data(adata)
 
-    # Step 3: train AE
+    # Step 3:train autoencoder
     print("\n" + "="*80)
     print("STEP 3: TRAINING AUTOENCODER")
     print("="*80)
     model, train_losses, val_losses = train_autoencoder(
-        train_loader, val_loader, input_dim, latent_dim, num_epochs_ae, save_path=ae_dir
-    )
+            train_loader, val_loader, input_dim, latent_dim, num_epochs_ae, save_path=ae_dir
+        )
     adata_latent, test_loss = evaluate_autoencoder(
         model, test_loader, adata, adata.var_names.tolist(), save_path=ae_dir
     )
-
+    
     # Save latent representations
     latent_file = os.path.join(ae_dir, "latent_representation.h5ad")
     adata_latent.write(latent_file)
 
-    # -------------------------------------------------------
-    # DEBUG B: distribution BEFORE LOOCV (cell + patient-level)
-    # -------------------------------------------------------
+    # ===== DEBUG: label distribution before LOOCV =====
     print("\n[DEBUG] Label distribution BEFORE LOOCV")
 
-    if label_col not in adata_latent.obs.columns:
-        print(f"[DEBUG] ERROR: '{label_col}' not found in adata_latent.obs")
-    else:
-        print("[DEBUG] Cell-level label distribution:")
-        print(adata_latent.obs[label_col].value_counts(dropna=False))
+    print("[DEBUG] Cell-level label distribution:")
+    print(adata_latent.obs[label_col].value_counts(dropna=False))
 
-        pt = adata_latent.obs.groupby("patient_id")[label_col].first()
-        print("\n[DEBUG] Patient-level label distribution (first per patient):")
-        print(pt.value_counts(dropna=False))
+    print("\n[DEBUG] Patient-level label distribution:")
+    print(
+        adata_latent.obs
+        .groupby("patient_id")[label_col]
+        .first()
+        .value_counts(dropna=False)
+    )
 
-        # ✅ 你要的：只看同一批 non-NaN 病人（51）
-        pt_valid = pt.dropna()
-        print("\n[DEBUG] Patient-level label distribution (NON-NaN patients only):")
-        print(pt_valid.value_counts(dropna=False))
-        print(f"[DEBUG] NON-NaN patient count: {pt_valid.shape[0]}")
+    print("[DEBUG] Number of patients:",
+        adata_latent.obs["patient_id"].nunique())
+    print("===============================================\n")
+    # ================================================
 
-        # ✅ 列出 NaN 病人有哪些（避免你一直覺得 “哪 54 個？”）
-        nan_pids = pt[pt.isna()].index.astype(str).tolist()
-        print(f"\n[DEBUG] NaN patients (n={len(nan_pids)}). First 30:")
-        print(nan_pids[:30])
+    # ===== DEBUG: CD19 relapse phenotype distribution =====
+    print("\n[DEBUG] CD19 phenotype (cell-level):")
+    print(adata_latent.obs["relapse_phenotype"].value_counts(dropna=False))
 
+    print("\n[DEBUG] CD19 phenotype (patient-level):")
+    print(
+        adata_latent.obs
+        .groupby("patient_id")["relapse_phenotype"]
+        .first()
+        .value_counts(dropna=False)
+    )
     print("===============================================\n")
 
-    # -------------------------------------------------------
-    # DEBUG C: specifically for relapse_gt200 vs relapse_gt300
-    # -------------------------------------------------------
-    # 你現在的痛點就是這個，所以我直接把它寫死成 debug（不改任何 function arg）
-    if ("relapse_gt200" in adata_latent.obs.columns) and ("relapse_gt300" in adata_latent.obs.columns):
-        print("\n[DEBUG] Compare relapse_gt200 vs relapse_gt300 (patient-level, SAME patient set)")
-
-        pt200 = adata_latent.obs.groupby("patient_id")["relapse_gt200"].first()
-        pt300 = adata_latent.obs.groupby("patient_id")["relapse_gt300"].first()
-
-        # ✅ 只在同一批「兩者都不是 NaN」的病人上比較
-        mask = pt200.notna() & pt300.notna()
-        pids_both = pt200.index[mask].astype(str).tolist()
-
-        print(f"[DEBUG] Patients with BOTH non-NaN labels: {len(pids_both)}")
-
-        # 分布（只在這批人上）
-        print("\n[DEBUG] relapse_gt200 distribution on BOTH-non-NaN patients:")
-        print(pt200.loc[mask].value_counts(dropna=False))
-
-        print("\n[DEBUG] relapse_gt300 distribution on BOTH-non-NaN patients:")
-        print(pt300.loc[mask].value_counts(dropna=False))
-
-        # ✅ 最關鍵：直接列出「哪一些病人 gt200 != gt300」
-        diff = (pt200.loc[mask] != pt300.loc[mask])
-        diff_pids = diff[diff].index.astype(str).tolist()
-
-        print(f"\n[DEBUG] Patients where gt200 != gt300: {len(diff_pids)}")
-        if len(diff_pids) > 0:
-            show = diff_pids[:50]
-            df_show = pd.DataFrame({
-                "patient_id": show,
-                "relapse_gt200": pt200.loc[show].astype(str).values,
-                "relapse_gt300": pt300.loc[show].astype(str).values,
-            })
-            print(df_show.to_string(index=False))
-        else:
-            print("[DEBUG] No patient-level differences between gt200 and gt300 on BOTH-non-NaN set.")
-
-        print("===============================================\n")
-    else:
-        print("\n[DEBUG] relapse_gt200/relapse_gt300 columns not both present; skipping gt200 vs gt300 debug.\n")
-
-    # (Optional) your existing phenotype prints (keep unchanged)
+    # ===== Create binary CD19 relapse label =====
     if "relapse_phenotype" in adata_latent.obs.columns:
-        print("\n[DEBUG] relapse_phenotype (cell-level):")
-        print(adata_latent.obs["relapse_phenotype"].value_counts(dropna=False))
+        rp = adata_latent.obs["relapse_phenotype"].astype(str).str.strip()
 
-        print("\n[DEBUG] relapse_phenotype (patient-level first):")
-        print(
-            adata_latent.obs
-            .groupby("patient_id")["relapse_phenotype"]
-            .first()
-            .value_counts(dropna=False)
-        )
-        print("===============================================\n")
+        adata_latent.obs["CD19_neg_relapse"] = rp.map({
+            "CD19neg": 1,
+            "CD19pos": 0
+        })
+    # ===========================================
 
-    # Step 4: LOOCV
+    # Step 4: Run LOOCV
     print("\n" + "="*80)
     print("STEP 4: RUNNING LEAVE-ONE-OUT CROSS-VALIDATION")
     print("="*80)
-
+    
+    # Check if we have response information
     if label_col not in adata_latent.obs.columns:
         print(f"ERROR: '{label_col}' column not found in the data. Cannot proceed with MIL.")
         return None
-
-    # Remove patients with NaN responses (this is your existing logic)
+    
+    # Remove patients with NaN responses
     patients_with_missing = adata_latent.obs[adata_latent.obs[label_col].isna()]['patient_id'].unique()
     if len(patients_with_missing) > 0:
         print(f"Removing {len(patients_with_missing)} patients with missing responses")
         adata_latent = adata_latent[~adata_latent.obs['patient_id'].isin(patients_with_missing)].copy()
-
+        
+        # update wandb config
+        # wandb.config.update({
+        #     "patients_after_filtering": adata_latent.obs['patient_id'].nunique(),
+        #     "cells_after_filtering": adata_latent.n_obs,
+        #     "patients_removed": len(patients_with_missing)
+        #     })
+        
     cv_results = leave_one_out_cross_validation(
-        adata_latent,
-        input_dim=latent_dim,
-        num_classes=num_classes,
-        hidden_dim=hidden_dim,
-        sample_source_dim=sample_source_dim,
-        num_epochs=num_epochs,
-        save_path=mil_dir,
-        label_col=label_col,
-        pos_label=pos_label,
-        neg_label=neg_label,
+        adata_latent, 
+        input_dim = latent_dim,
+        num_classes = num_classes, 
+        hidden_dim = hidden_dim,
+        sample_source_dim = sample_source_dim,
+        num_epochs = num_epochs,
+        save_path = mil_dir,
+        label_col = label_col,
+        pos_label = pos_label,
+        neg_label = neg_label,
         aggregator=aggregator,
         topk=topk,
         tau=tau,
     )
+        
+
+    # wandb.finish()
 
     print(f"Pipeline completed successfully! Results saved to {result_dir}")
 
@@ -636,6 +625,5 @@ def run_pipeline_loocv(input_file, output_dir='results',
         'mil_results': cv_results,
         'results_dir': result_dir
     }
-
 
 
