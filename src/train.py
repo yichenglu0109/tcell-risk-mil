@@ -453,9 +453,11 @@ def run_pipeline_loocv(input_file, output_dir='results',
                        latent_dim=64, num_epochs_ae=200,
                        num_epochs=50, num_classes=2,
                        hidden_dim=128, sample_source_dim=None,
-                       project_name="car-t-response", label_col="Response_3m", pos_label="R", neg_label="NR",
+                       project_name="car-t-response", label_col="Response_3m",
+                       pos_label="R", neg_label="NR",
                        aggregator="attention", topk=0, tau=0.0):
 
+    # Create output directories
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     result_dir = os.path.join(output_dir, f"run_{timestamp}")
     ae_dir = os.path.join(result_dir, "autoencoder")
@@ -465,86 +467,90 @@ def run_pipeline_loocv(input_file, output_dir='results',
     os.makedirs(ae_dir, exist_ok=True)
     os.makedirs(mil_dir, exist_ok=True)
 
-    # -------------------------
-    # Step 1: Load
-    # -------------------------
+    # Step 1: Load and explore data
     print("\n" + "="*80)
     print("STEP 1: LOADING AND EXPLORING DATA")
     print("="*80)
     adata = load_and_explore_data(input_file)
 
-    # ✅ CHECKPOINT 1: raw
-    debug_patient_labels(
-        adata, "C1_raw_loaded",
-        label_cols=[label_col, "relapse_gt200", "relapse_gt300", "relapse_phenotype"],
-        patient_col="patient_id",
-        sample_col="sample_source",   # 若你的欄位叫 Sample_source，改這裡
-    )
+    # ===== DEBUG: raw input quick checks =====
+    print("\n[DEBUG] Raw input sanity")
+    print("[DEBUG] adata shape:", adata.n_obs, "cells x", adata.n_vars, "features")
+    if "patient_id" in adata.obs.columns:
+        print("[DEBUG] n_patients:", adata.obs["patient_id"].astype(str).nunique())
+    print("[DEBUG] obs columns (head 30):", list(adata.obs.columns)[:30])
+    if label_col in adata.obs.columns:
+        print("[DEBUG] raw cell-level label counts:")
+        print(adata.obs[label_col].value_counts(dropna=False))
+        print("[DEBUG] raw patient-level label counts (first per patient):")
+        print(adata.obs.groupby("patient_id")[label_col].first().value_counts(dropna=False))
+    else:
+        print(f"[DEBUG] raw data missing label_col='{label_col}' (OK if you add later)")
+    print("===============================================\n")
+    # ===========================================
 
-    # -------------------------
-    # Step 2/3: AE train + latent
-    # -------------------------
+    # Step 2: preprocess for AE
     print("\n" + "="*80)
-    print("STEP 2: TRAINING AUTOENCODER (split loaders)")
+    print("STEP 2: PREPROCESSING FOR AUTOENCODER")
     print("="*80)
     train_loader, val_loader, test_loader, input_dim = preprocess_data(adata)
 
+    # Step 3: train AE
     print("\n" + "="*80)
-    print("STEP 3: TRAINING AUTOENCODER (fit)")
+    print("STEP 3: TRAINING AUTOENCODER")
     print("="*80)
     model, train_losses, val_losses = train_autoencoder(
         train_loader, val_loader, input_dim, latent_dim, num_epochs_ae, save_path=ae_dir
     )
-
     adata_latent, test_loss = evaluate_autoencoder(
         model, test_loader, adata, adata.var_names.tolist(), save_path=ae_dir
     )
 
+    # Save latent
     latent_file = os.path.join(ae_dir, "latent_representation.h5ad")
     adata_latent.write(latent_file)
 
-    # ✅ CHECKPOINT 2: latent
-    debug_patient_labels(
-        adata_latent, "C2_after_latent",
-        label_cols=[label_col, "relapse_gt200", "relapse_gt300", "relapse_phenotype"],
-        patient_col="patient_id",
-        sample_col="sample_source",
-    )
-
-    # -------------------------
-    # Your existing debug blocks (keep if you want)
-    # -------------------------
+    # ===== DEBUG: label distribution before LOOCV =====
     print("\n[DEBUG] Label distribution BEFORE LOOCV")
-    print("[DEBUG] Cell-level label distribution:")
-    print(adata_latent.obs[label_col].value_counts(dropna=False))
-    print("\n[DEBUG] Patient-level label distribution:")
-    print(
-        adata_latent.obs
-        .groupby("patient_id", observed=True)[label_col]
-        .first()
-        .value_counts(dropna=False)
-    )
-    print("[DEBUG] Number of patients:", adata_latent.obs["patient_id"].nunique())
-    print("===============================================\n")
 
-    # -------------------------
-    # Optional: create CD19_neg_relapse
-    # -------------------------
+    if label_col in adata_latent.obs.columns:
+        print("[DEBUG] Cell-level label distribution:")
+        print(adata_latent.obs[label_col].value_counts(dropna=False))
+
+        print("\n[DEBUG] Patient-level label distribution (first per patient):")
+        pt = adata_latent.obs.groupby("patient_id")[label_col].first()
+        print(pt.value_counts(dropna=False))
+
+        # 重要：檢查「同一病人」label 是否一致（如果不一致會造成你看到 weird 行為）
+        # 這段不需要任何額外 function
+        per_patient_nuniq = adata_latent.obs.groupby("patient_id")[label_col].nunique(dropna=True)
+        n_inconsistent = int((per_patient_nuniq > 1).sum())
+        print("\n[DEBUG] Patients with >1 unique label (inconsistent within patient):", n_inconsistent)
+        if n_inconsistent > 0:
+            bad_pids = per_patient_nuniq[per_patient_nuniq > 1].index.tolist()[:10]
+            print("[DEBUG] Example inconsistent patient_ids (first 10):", bad_pids)
+    else:
+        print(f"[DEBUG] '{label_col}' not found in adata_latent.obs")
+    print("[DEBUG] Number of patients:", adata_latent.obs["patient_id"].astype(str).nunique())
+    print("===============================================\n")
+    # ================================================
+
+    # （可選）你原本那段 CD19 phenotype debug：保留，但加 guard
     if "relapse_phenotype" in adata_latent.obs.columns:
+        print("\n[DEBUG] relapse_phenotype (cell-level):")
+        print(adata_latent.obs["relapse_phenotype"].value_counts(dropna=False))
+
+        print("\n[DEBUG] relapse_phenotype (patient-level first):")
+        print(
+            adata_latent.obs.groupby("patient_id")["relapse_phenotype"].first().value_counts(dropna=False)
+        )
+        print("===============================================\n")
+
+        # Create binary CD19 relapse label
         rp = adata_latent.obs["relapse_phenotype"].astype(str).str.strip()
         adata_latent.obs["CD19_neg_relapse"] = rp.map({"CD19neg": 1, "CD19pos": 0})
 
-    # ✅ CHECKPOINT 3: after making new label (should not change patient set)
-    debug_patient_labels(
-        adata_latent, "C3_after_cd19_mapping",
-        label_cols=[label_col, "relapse_gt200", "relapse_gt300", "CD19_neg_relapse"],
-        patient_col="patient_id",
-        sample_col="sample_source",
-    )
-
-    # -------------------------
     # Step 4: LOOCV
-    # -------------------------
     print("\n" + "="*80)
     print("STEP 4: RUNNING LEAVE-ONE-OUT CROSS-VALIDATION")
     print("="*80)
@@ -553,41 +559,22 @@ def run_pipeline_loocv(input_file, output_dir='results',
         print(f"ERROR: '{label_col}' column not found in the data. Cannot proceed with MIL.")
         return None
 
-    # ✅ 在 filter missing 之前先記住病人集合（用來找誰被砍）
-    before_pids = set(adata_latent.obs["patient_id"].astype(str).unique())
+    # ===== DEBUG: how many patients will be dropped for missing labels =====
+    patients_with_missing = adata_latent.obs.loc[
+        adata_latent.obs[label_col].isna(), "patient_id"
+    ].astype(str).unique()
 
-    patients_with_missing = adata_latent.obs[adata_latent.obs[label_col].isna()]["patient_id"].unique()
+    print("[DEBUG] patients with missing label:", len(patients_with_missing))
     if len(patients_with_missing) > 0:
-        print(f"[INFO] Removing {len(patients_with_missing)} patients with missing {label_col}")
-        adata_latent = adata_latent[~adata_latent.obs["patient_id"].isin(patients_with_missing)].copy()
+        print("[DEBUG] example missing-label patient_ids (first 20):", list(patients_with_missing)[:20])
 
-    after_pids = set(adata_latent.obs["patient_id"].astype(str).unique())
-    dropped = sorted(list(before_pids - after_pids))
+        # filter
+        adata_latent = adata_latent[~adata_latent.obs["patient_id"].astype(str).isin(patients_with_missing)].copy()
 
-    # ✅ CHECKPOINT 4: after filtering
-    debug_patient_labels(
-        adata_latent, "C4_after_missing_filter",
-        label_cols=[label_col, "relapse_gt200", "relapse_gt300"],
-        patient_col="patient_id",
-        sample_col="sample_source",
-    )
-    if len(dropped) > 0:
-        print("[DEBUG] dropped patients due to missing label (first 30):")
-        print(dropped[:30])
-
-    # ✅ HARD ASSERT (可選)：你預期 diff=10，但如果這裡不是 10 就代表前面某步動到你不想動的欄位
-    # 你可以先用 print，不想直接 crash 就把 assert 註解掉
-    # （建議先開著，逼你抓到 stage）
-    pt = adata_latent.obs.groupby("patient_id", observed=True)[["relapse_gt200","relapse_gt300"]].first()
-    a = pt["relapse_gt200"]; b = pt["relapse_gt300"]
-    both = a.notna() & b.notna()
-    diff = int((a[both] != b[both]).sum())
-    print(f"[ASSERT-CHECK] diff among valid (gt200 vs gt300) right before LOOCV = {diff}")
-    # assert diff == 10, f"Expected diff=10, but got {diff}. A filtering/subsetting step changed your cohort."
-
-    # ✅ 最重要：把 label_col 換成 relapse_gt300 時，你要在這裡確認 notna 病人數
-    # 如果你跑 label_col="relapse_gt300"，這裡應該顯示 notna patients=51
-    # 否則就是：某一步讓 relapse_gt300 大量變 NaN 或被移除。
+    print("[DEBUG] after filtering: n_patients =", adata_latent.obs["patient_id"].astype(str).nunique(),
+          "| n_cells =", adata_latent.n_obs)
+    print("===============================================\n")
+    # ===============================================
 
     cv_results = leave_one_out_cross_validation(
         adata_latent,
@@ -614,5 +601,6 @@ def run_pipeline_loocv(input_file, output_dir='results',
         "mil_results": cv_results,
         "results_dir": result_dir,
     }
+
 
 
