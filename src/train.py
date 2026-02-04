@@ -191,8 +191,6 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
                     one_hot_sample_source = None
 
                 bags = [bag.to(device) for bag in bags]
-                if aggregator == "pseudobulk":
-                    bags = [bag.mean(dim=0) for bag in bags]   # [input_dim]
 
                 batch_labels = batch_labels.to(device).long().view(-1)
                 
@@ -286,8 +284,7 @@ def leave_one_out_cross_validation(adata, input_dim, num_classes=2, hidden_dim=1
                 patient_id = patient_ids[0]  
 
                 bags = [bag.to(device) for bag in bags]
-                if aggregator == "pseudobulk":
-                    bags = [bag.mean(dim=0) for bag in bags]   # [input_dim]
+
                 batch_labels = batch_labels.to(device).long().view(-1)
 
                 # Forward pass（有 sample_source 才傳）
