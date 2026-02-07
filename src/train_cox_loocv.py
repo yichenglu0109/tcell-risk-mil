@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from sklearn.model_selection import StratifiedKFold 
 # from lifelines.utils import concordance_index
 import scanpy as sc
 
@@ -190,6 +191,8 @@ def main():
     ap.add_argument("--aggregator", default="attention", choices=["attention", "mean", "q90"])
     ap.add_argument("--topk", type=int, default=0)
     ap.add_argument("--tau", type=float, default=0.0)
+    ap.add_argument("--cv", default="kfold", choices=["loocv", "kfold"])
+    ap.add_argument("--k", type=int, default=5)
     args = ap.parse_args()
 
     # ✅ guard: pseudobulk 不該用 topk/tau（沒意義）
@@ -224,59 +227,122 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] device: {device}")
 
-    # LOOCV: train on N-1, predict risk for held-out
-    risks = []
-    for i, test_pid in enumerate(patients, start=1):
-        print(f"[LOOCV] {i}/{len(patients)} test_patient={test_pid}")
+    # ===== CV =====
+    if args.cv == "loocv":
+        # LOOCV: train on N-1, predict risk for held-out
+        risks = []
+        for i, test_pid in enumerate(patients, start=1):
+            print(f"[LOOCV] {i}/{len(patients)} test_patient={test_pid}")
 
-        # build train dataset (subset patients, but no obs modification)
-        train_pids = [p for p in patients if p != test_pid]
-        # subset adata cells for train/test
-        train_adata = adata[adata.obs[args.patient_col].astype(str).isin(train_pids)].copy()
-        test_adata  = adata[adata.obs[args.patient_col].astype(str) == str(test_pid)].copy()
+            train_pids = [p for p in patients if p != test_pid]
+            train_adata = adata[adata.obs[args.patient_col].astype(str).isin(train_pids)].copy()
+            test_adata  = adata[adata.obs[args.patient_col].astype(str) == str(test_pid)].copy()
 
-        train_ds = PatientBagSurvivalDataset(
-            train_adata,
-            patient_col=args.patient_col,
-            relapse_col=args.relapse_col,
-            ttr_col=args.ttr_col,
-            fu_col=args.fu_col,
-            days_per_month=args.days_per_month,
-            drop_inconsistent=args.drop_inconsistent,
-        )
-        model = train_one_fold(
-            train_ds=train_ds,
-            input_dim=input_dim,
-            hidden_dim=args.hidden_dim,
-            dropout=args.dropout,
-            device=device,
-            epochs=args.epochs,
-            lr=args.lr,
-            weight_decay=args.weight_decay,
-            batch_size=args.batch_size,
-            patience=args.patience,
-            seed=args.seed,
-            aggregator=args.aggregator,
-            topk=args.topk,
-            tau=args.tau,
-        )
+            train_ds = PatientBagSurvivalDataset(
+                train_adata,
+                patient_col=args.patient_col,
+                relapse_col=args.relapse_col,
+                ttr_col=args.ttr_col,
+                fu_col=args.fu_col,
+                days_per_month=args.days_per_month,
+                drop_inconsistent=args.drop_inconsistent,
+            )
+            model = train_one_fold(
+                train_ds=train_ds,
+                input_dim=input_dim,
+                hidden_dim=args.hidden_dim,
+                dropout=args.dropout,
+                device=device,
+                epochs=args.epochs,
+                lr=args.lr,
+                weight_decay=args.weight_decay,
+                batch_size=args.batch_size,
+                patience=args.patience,
+                seed=args.seed,
+                aggregator=args.aggregator,
+                topk=args.topk,
+                tau=args.tau,
+            )
 
-        # get the held-out patient's bag + (t,e) computed from its own obs
-        test_ds = PatientBagSurvivalDataset(
-            test_adata,
-            patient_col=args.patient_col,
-            relapse_col=args.relapse_col,
-            ttr_col=args.ttr_col,
-            fu_col=args.fu_col,
-            days_per_month=args.days_per_month,
-            drop_inconsistent=args.drop_inconsistent,
-        )
-        # should be exactly 1 patient
-        bag, t, e, pid = test_ds[0]
-        r = predict_risk(model, bag, device)
-        risks.append(r)
+            test_ds = PatientBagSurvivalDataset(
+                test_adata,
+                patient_col=args.patient_col,
+                relapse_col=args.relapse_col,
+                ttr_col=args.ttr_col,
+                fu_col=args.fu_col,
+                days_per_month=args.days_per_month,
+                drop_inconsistent=args.drop_inconsistent,
+            )
+            bag, t, e, pid = test_ds[0]
+            r = predict_risk(model, bag, device)
+            risks.append(r)
 
-    risks = np.array(risks, float)
+        risks = np.array(risks, float)
+
+    else:
+        # k-fold (patient-level, stratified by event)
+        k = int(args.k)
+        risks = np.full(len(patients), np.nan, dtype=float)
+
+        skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=args.seed)
+
+        for fold, (tr_idx, va_idx) in enumerate(skf.split(patients, event), start=1):
+            train_pids = patients[tr_idx].tolist()
+            val_pids   = patients[va_idx].tolist()
+
+            print(f"[{k}-fold] fold={fold}/{k} train={len(train_pids)} val={len(val_pids)} val_events={event[va_idx].sum()}")
+
+            train_adata = adata[adata.obs[args.patient_col].astype(str).isin(train_pids)].copy()
+
+            train_ds = PatientBagSurvivalDataset(
+                train_adata,
+                patient_col=args.patient_col,
+                relapse_col=args.relapse_col,
+                ttr_col=args.ttr_col,
+                fu_col=args.fu_col,
+                days_per_month=args.days_per_month,
+                drop_inconsistent=args.drop_inconsistent,
+            )
+            model = train_one_fold(
+                train_ds=train_ds,
+                input_dim=input_dim,
+                hidden_dim=args.hidden_dim,
+                dropout=args.dropout,
+                device=device,
+                epochs=args.epochs,
+                lr=args.lr,
+                weight_decay=args.weight_decay,
+                batch_size=args.batch_size,
+                patience=args.patience,
+                seed=args.seed + fold,  # 每 fold seed 稍微錯開（可選）
+                aggregator=args.aggregator,
+                topk=args.topk,
+                tau=args.tau,
+            )
+
+            # predict risks for all val patients (out-of-fold)
+            for pid in val_pids:
+                test_adata = adata[adata.obs[args.patient_col].astype(str) == str(pid)].copy()
+
+                test_ds = PatientBagSurvivalDataset(
+                    test_adata,
+                    patient_col=args.patient_col,
+                    relapse_col=args.relapse_col,
+                    ttr_col=args.ttr_col,
+                    fu_col=args.fu_col,
+                    days_per_month=args.days_per_month,
+                    drop_inconsistent=args.drop_inconsistent,
+                )
+                bag, t, e, _ = test_ds[0]
+                r = predict_risk(model, bag, device)
+
+                idx = np.where(patients == pid)[0][0]
+                risks[idx] = r
+
+        if not np.isfinite(risks).all():
+            bad = np.where(~np.isfinite(risks))[0]
+            raise RuntimeError(f"Some patients missing out-of-fold predictions: idx={bad.tolist()}, pids={patients[bad].tolist()}")
+    # =================
 
     ci = c_index(time_days, event, risks)
     ci_flip = c_index(time_days, event, -risks)
@@ -300,12 +366,13 @@ def main():
         "args": vars(args),
     }
 
-    out_pkl = os.path.join(args.outdir, "cox_loocv_results.pkl")
+    tag = "loocv" if args.cv == "loocv" else f"kfold{args.k}"
+    out_pkl = os.path.join(args.outdir, f"cox_{tag}_results.pkl")
     with open(out_pkl, "wb") as f:
         pickle.dump(results, f)
     print(f"[INFO] saved: {out_pkl}")
 
-    out_csv = os.path.join(args.outdir, "cox_risk.csv")
+    out_csv = os.path.join(args.outdir, f"cox_risk_{tag}.csv")
     with open(out_csv, "w") as f:
         f.write("patient_id,time_days,event,risk\n")
         for pid, t, e, r in zip(patients, time_days, event, risks):
