@@ -338,7 +338,7 @@ def run_pipeline_loocv(input_file, output_dir='results',
                        num_epochs=50, num_classes=2,
                        hidden_dim=128, sample_source_dim=None,
                        project_name="car-t-response", label_col="Response_3m", pos_label="R", neg_label="NR",
-                       aggregator="attention", topk=0, tau=0.0):
+                       aggregator="attention", topk=0, tau=0.0, cv="loocv", k=5, seed=42):
     """run complete pipeline with leave one out cross validation
     
     Parameters:
