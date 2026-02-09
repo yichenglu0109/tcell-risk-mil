@@ -481,20 +481,21 @@ def run_pipeline_loocv(input_file, output_dir='results',
         #     "patients_removed": len(patients_with_missing)
         #     })
         
-    cv_results = leave_one_out_cross_validation(
-        adata_latent, 
-        input_dim = latent_dim,
-        num_classes = num_classes, 
-        hidden_dim = hidden_dim,
-        sample_source_dim = sample_source_dim,
-        num_epochs = num_epochs,
-        save_path = mil_dir,
-        label_col = label_col,
-        pos_label = pos_label,
-        neg_label = neg_label,
+    cv_results = cross_validation_mil(
+        adata_latent,
+        input_dim=latent_dim,
+        num_classes=num_classes,
+        hidden_dim=hidden_dim,
+        sample_source_dim=sample_source_dim,
+        num_epochs=num_epochs,
+        save_path=mil_dir,
+        label_col=label_col,
         aggregator=aggregator,
         topk=topk,
         tau=tau,
+        cv="kfold",
+        k=5,
+        seed=42,
     )
         
     # wandb.finish()
