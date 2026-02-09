@@ -151,9 +151,9 @@ def cross_validation_mil(
         print("[DEBUG] class_weights:", class_weights.detach().cpu().numpy())
 
         # ---- training ----
-        best_train_acc = -1.0
+        best_train_loss = float("inf")
         epochs_without_improvement = 0
-        patience = 20
+        patience = 10          # 建議 8~12
         min_delta = 1e-4
 
         for epoch in range(num_epochs):
@@ -195,9 +195,9 @@ def cross_validation_mil(
             if (epoch + 1) % 20 == 0:
                 print(f"[Fold {fold}] ep={epoch+1}/{num_epochs} train_loss={train_loss:.4f} train_acc={train_acc:.4f}")
 
-            # early stop on train_acc (since no val set)
-            if train_acc > best_train_acc + min_delta:
-                best_train_acc = train_acc
+            # early stopping on train_loss (since no val set)
+            if train_loss < best_train_loss - min_delta:
+                best_train_loss = train_loss
                 epochs_without_improvement = 0
                 torch.save(model.state_dict(), os.path.join(fold_save_path, "best_model.pth"))
             else:
@@ -493,9 +493,9 @@ def run_pipeline_loocv(input_file, output_dir='results',
         aggregator=aggregator,
         topk=topk,
         tau=tau,
-        cv="kfold",
-        k=5,
-        seed=42,
+        cv=cv,
+        k=k,
+        seed=seed,
     )
         
     # wandb.finish()
