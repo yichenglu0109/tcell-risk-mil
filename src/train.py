@@ -44,9 +44,15 @@ def cross_validation_mil(
     # create full dataset (for patient list + stable label_map)
     full_dataset = PatientBagDataset(adata, label_col=label_col)
 
-    # ---- FIX: freeze label_map globally so folds are consistent ----
-    label_map = full_dataset._label_to_int
-    print("[INFO] Global label_map:", label_map)
+    # ---- 替換原本的 label_map 獲取方式 ----
+    # 強制指定映射，不受數據讀取順序影響
+    # 這裡的 key 必須對應你 adata.obs[label_col] 裡的原始字串 (如 'No', 'Yes')
+    label_map = {"No": 0, "Yes": 1} 
+    print("[INFO] Fixed Global label_map:", label_map)
+
+    # # ---- FIX: freeze label_map globally so folds are consistent ----
+    # label_map = full_dataset._label_to_int
+    # print("[INFO] Global label_map:", label_map)
 
     sample_source_dim = (
         full_dataset.sample_source_dim
@@ -161,7 +167,7 @@ def cross_validation_mil(
         # ---- training ----
         best_train_loss = float("inf")
         epochs_without_improvement = 0
-        patience = 10          # 建議 8~12
+        patience = 15          # 建議 8~12
         min_delta = 1e-4
 
         for epoch in range(num_epochs):
