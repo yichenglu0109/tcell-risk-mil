@@ -148,6 +148,14 @@ def cross_validation_mil(
 
         criterion = nn.CrossEntropyLoss(weight=class_weights)
         optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            patience=5,     # loss 5 個 epoch 沒改善就降 LR
+            factor=0.5,
+            min_lr=1e-6,
+            verbose=True,
+        )
         print("[DEBUG] class_weights:", class_weights.detach().cpu().numpy())
 
         # ---- training ----
@@ -192,6 +200,8 @@ def cross_validation_mil(
             train_loss /= max(len(train_loader), 1)
             train_acc = train_correct / train_total if train_total > 0 else 0.0
 
+            scheduler.step(train_loss)
+        
             if (epoch + 1) % 20 == 0:
                 print(f"[Fold {fold}] ep={epoch+1}/{num_epochs} train_loss={train_loss:.4f} train_acc={train_acc:.4f}")
 
