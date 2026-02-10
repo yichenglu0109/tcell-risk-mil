@@ -20,7 +20,7 @@ def cross_validation_mil(
     hidden_dim=128,
     sample_source_dim=4,
     num_epochs=50,
-    learning_rate=5e-4,
+    learning_rate=5e-3,
     weight_decay=1e-2,
     save_path="results",
     label_col="Response_3m",
@@ -157,17 +157,17 @@ def cross_validation_mil(
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode="min",
-            patience=5,     # loss 5 個 epoch 沒改善就降 LR
+            patience=12,     # loss 5 個 epoch 沒改善就降 LR
             factor=0.5,
             min_lr=1e-6,
-            verbose=True,
+            verbose=False,
         )
         print("[DEBUG] class_weights:", class_weights.detach().cpu().numpy())
 
         # ---- training ----
         best_train_loss = float("inf")
         epochs_without_improvement = 0
-        patience = 15          # 建議 8~12
+        patience = 20          # 建議 8~12
         min_delta = 1e-4
 
         for epoch in range(num_epochs):
