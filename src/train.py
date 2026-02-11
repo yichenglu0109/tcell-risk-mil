@@ -149,7 +149,7 @@ def cross_validation_mil(
             num_classes=num_classes,
             hidden_dim=hidden_dim,
             dropout=0.25,
-            sample_source_dim=sample_source_dim,
+            sample_source_dim=None,
             aggregator=aggregator,
             topk=_topk,
             tau=_tau,
@@ -200,10 +200,11 @@ def cross_validation_mil(
                 bags = [bag.to(device) for bag in bags]
                 batch_labels = batch_labels.to(device).long().view(-1)
 
-                if one_hot is not None:
-                    out = model(bags, sample_source=one_hot)
-                else:
-                    out = model(bags)
+                # if one_hot is not None:
+                #     out = model(bags, sample_source=one_hot)
+                # else:
+                #     out = model(bags)
+                out = model(bags)
 
                 logits = out["logits"]
                 loss = criterion(logits, batch_labels)
@@ -255,10 +256,11 @@ def cross_validation_mil(
                 batch_labels = batch_labels.to(device).long().view(-1)
 
                 want_attn = (aggregator == "attention")
-                if one_hot is not None:
-                    out = model(bags, sample_source=one_hot, return_attention=want_attn)
-                else:
-                    out = model(bags, return_attention=want_attn)
+                # if one_hot is not None:
+                #     out = model(bags, sample_source=one_hot, return_attention=want_attn)
+                # else:
+                #     out = model(bags, return_attention=want_attn)
+                out = model(bags)
 
                 logits = out["logits"]
                 probs = F.softmax(logits, dim=1)
