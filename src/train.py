@@ -425,25 +425,25 @@ def run_pipeline_loocv(input_file, output_dir='results',
     #         "Response_distribution": dict(adata.obs["Response_3m"].value_counts())
     #     })
 
-    # # step 2: train autoencoder
-    # print("\n" + "="*80)
-    # print("STEP 2: TRAINING AUTOENCODER")
-    # print("="*80)
-    # train_loader, val_loader, test_loader, input_dim = preprocess_data(adata)
+    # step 2: train autoencoder
+    print("\n" + "="*80)
+    print("STEP 2: TRAINING AUTOENCODER")
+    print("="*80)
+    train_loader, val_loader, test_loader, input_dim = preprocess_data(adata)
 
-    # # Step 3:train autoencoder
-    # print("\n" + "="*80)
-    # print("STEP 3: TRAINING AUTOENCODER")
-    # print("="*80)
-    # model, train_losses, val_losses = train_autoencoder(
-    #         train_loader, val_loader, input_dim, latent_dim, num_epochs_ae, save_path=ae_dir
-    #     )
-    # adata_latent, test_loss = evaluate_autoencoder(
-    #     model, test_loader, adata, adata.var_names.tolist(), save_path=ae_dir
-    # )
+    # Step 3:train autoencoder
+    print("\n" + "="*80)
+    print("STEP 3: TRAINING AUTOENCODER")
+    print("="*80)
+    model, train_losses, val_losses = train_autoencoder(
+            train_loader, val_loader, input_dim, latent_dim, num_epochs_ae, save_path=ae_dir
+        )
+    adata_latent, test_loss = evaluate_autoencoder(
+        model, test_loader, adata, adata.var_names.tolist(), save_path=ae_dir
+    )
     
-    adata_latent = adata.copy()
-    current_input_dim = adata.n_vars
+    # adata_latent = adata.copy()
+    # current_input_dim = adata.n_vars
     
     # Save latent representations
     latent_file = os.path.join(ae_dir, "latent_representation.h5ad")
