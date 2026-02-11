@@ -182,7 +182,7 @@ def cross_validation_mil(
         best_train_loss = float("inf")
         epochs_without_improvement = 0
         patience = 25          
-        min_delta = 1e-4
+        min_delta = 1e-5
 
         for epoch in range(num_epochs):
             model.train()
