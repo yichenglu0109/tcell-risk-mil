@@ -20,7 +20,7 @@ def cross_validation_mil(
     hidden_dim=128,
     sample_source_dim=4,
     num_epochs=50,
-    learning_rate=1e-3,
+    learning_rate=5e-3,
     weight_decay=1e-2,
     save_path="results",
     label_col="Response_3m",
@@ -57,7 +57,7 @@ def cross_validation_mil(
     for lbl in raw_labels:
         s = str(lbl).strip()
         # 支援原有的 Yes/No 以及新的 CD19pos/neg
-        if s in ['Yes', 'CD19pos', '1', '1.0', 'R']:
+        if s in ['Yes', 'CD19pos', '1', '1.0', 'NR']:
             label_map[lbl] = 1
         elif s in ['No', 'CD19neg', '0', '0.0', 'NR']:
             label_map[lbl] = 0
