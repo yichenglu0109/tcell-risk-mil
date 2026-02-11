@@ -47,8 +47,28 @@ def cross_validation_mil(
     # ---- 替換原本的 label_map 獲取方式 ----
     # 強制指定映射，不受數據讀取順序影響
     # 這裡的 key 必須對應你 adata.obs[label_col] 裡的原始字串 (如 'No', 'Yes')
-    label_map = {"No": 0, "Yes": 1} 
-    print("[INFO] Fixed Global label_map:", label_map)
+    # label_map = {"No": 0, "Yes": 1} 
+    # print("[INFO] Fixed Global label_map:", label_map)
+
+    # ---- 強健的 Label Mapping 邏輯 ----
+    # 1. 取得數據中所有非空的原始標籤
+    unique_labels = adata.obs[label_col].dropna().unique().tolist()
+    
+    # 2. 定義關鍵字映射規則
+    # 這裡的邏輯是：只要字串包含 'pos' 或 'yes' 或 '1'，就當作正樣本 (1)
+    # 反之包含 'neg' 或 'no' 或 '0'，就當作負樣本 (0)
+    label_map = {}
+    for lbl in unique_labels:
+        s = str(lbl).strip().lower()
+        if 'pos' in s or 'yes' in s or '1' in s or s == 'r':
+            label_map[lbl] = 1
+        elif 'neg' in s or 'no' in s or '0' in s or s == 'nr':
+            label_map[lbl] = 0
+        else:
+            # 如果出現意料之外的標籤（如 NaN 或其他分類）
+            print(f"[WARNING] Unrecognized label: {lbl}, skipping...")
+
+    print("[INFO] Final mapped label_map:", label_map)
 
     # # ---- FIX: freeze label_map globally so folds are consistent ----
     # label_map = full_dataset._label_to_int
@@ -167,7 +187,7 @@ def cross_validation_mil(
         # ---- training ----
         best_train_loss = float("inf")
         epochs_without_improvement = 0
-        patience = 25          # 建議 8~12
+        patience = 25          
         min_delta = 1e-4
 
         for epoch in range(num_epochs):
