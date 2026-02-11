@@ -469,17 +469,17 @@ def run_pipeline_loocv(input_file, output_dir='results',
     # ================================================
 
     # ===== DEBUG: CD19 relapse phenotype distribution =====
-    print("\n[DEBUG] CD19 phenotype (cell-level):")
-    print(adata_latent.obs["relapse_phenotype"].value_counts(dropna=False))
+    # print("\n[DEBUG] CD19 phenotype (cell-level):")
+    # print(adata_latent.obs["relapse_phenotype"].value_counts(dropna=False))
 
-    print("\n[DEBUG] CD19 phenotype (patient-level):")
-    print(
-        adata_latent.obs
-        .groupby("patient_id")["relapse_phenotype"]
-        .first()
-        .value_counts(dropna=False)
-    )
-    print("===============================================\n")
+    # print("\n[DEBUG] CD19 phenotype (patient-level):")
+    # print(
+    #     adata_latent.obs
+    #     .groupby("patient_id")["relapse_phenotype"]
+    #     .first()
+    #     .value_counts(dropna=False)
+    # )
+    # print("===============================================\n")
 
     # ===== Create binary CD19 relapse label =====
     if "relapse_phenotype" in adata_latent.obs.columns:
