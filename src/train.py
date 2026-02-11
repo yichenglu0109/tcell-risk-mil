@@ -516,7 +516,7 @@ def run_pipeline_loocv(input_file, output_dir='results',
         
     cv_results = cross_validation_mil(
         adata_latent,
-        input_dim=input_dim,
+        input_dim=latent_dim,
         num_classes=num_classes,
         hidden_dim=hidden_dim,
         sample_source_dim=sample_source_dim,
