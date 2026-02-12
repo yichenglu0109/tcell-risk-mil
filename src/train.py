@@ -311,6 +311,14 @@ def cross_validation_mil(
 
     if num_classes == 2:
         all_prediction_probs = np.array(all_prediction_probs, dtype=float)
+        # ===== DEBUG AUC direction check =====
+        auc_prob = roc_auc_score(all_true_labels, all_prediction_probs)
+        auc_flip = roc_auc_score(all_true_labels, 1 - all_prediction_probs)
+
+        print("\n[DEBUG] AUC(prob) =", auc_prob)
+        print("[DEBUG] AUC(1-prob) =", auc_flip)
+        print("[DEBUG] sum =", auc_prob + auc_flip)
+        # =====================================
         overall_precision = precision_score(all_true_labels, all_predicted_labels, zero_division=0)
         overall_recall = recall_score(all_true_labels, all_predicted_labels, zero_division=0)
         overall_f1 = f1_score(all_true_labels, all_predicted_labels, zero_division=0)
@@ -532,7 +540,7 @@ def run_pipeline_loocv(input_file, output_dir='results',
         k=k,
         seed=seed,
     )
-        
+
     # wandb.finish()
 
     print(f"Pipeline completed successfully! Results saved to {result_dir}")
