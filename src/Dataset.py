@@ -256,14 +256,19 @@ class PatientBagDataset(Dataset):
                     self.patient_labels[patient] = (t, e)
         
         # For classification: create mapping if needed (string -> int)
+        # --- normalize helper ---
+        def _norm_label(x):
+            return str(x).strip()
+
         if self.task_type == "classification":
             raw_labels = [self.patient_labels[p] for p in self.patients]
-            # apply explicit map if provided
+
             if self.label_map is not None:
-                self._label_to_int = dict(self.label_map)
+                # normalize external mapping from train.py
+                self._label_to_int = {_norm_label(k): int(v) for k, v in self.label_map.items()}
             else:
-                # auto factorize (stable order)
-                uniq = sorted(list({str(x) for x in raw_labels}))
+                # fallback: auto factorize on normalized labels
+                uniq = sorted({_norm_label(x) for x in raw_labels})
                 self._label_to_int = {lab: i for i, lab in enumerate(uniq)}
 
             self.num_classes = len(set(self._label_to_int.values()))
@@ -271,7 +276,7 @@ class PatientBagDataset(Dataset):
             self._label_to_int = None
             self.num_classes = None
 
-    # Convert patients to a list for indexing
+        # ✅ ALWAYS define patient_list at top-level indent
         self.patient_list = list(self.patients)
     
     def __len__(self):
@@ -291,12 +296,10 @@ class PatientBagDataset(Dataset):
         bag = torch.FloatTensor(self.patient_bags[patient])
         
         if self.task_type == "classification":
-            lab = self.patient_labels[patient]
-            if isinstance(lab, str):
-                key = lab
-            else:
-                key = str(lab)
-            y = self._label_to_int[key]
+            key = str(self.patient_labels[patient]).strip()
+            if key not in self._label_to_int:
+                raise KeyError(f"Label '{key}' not in label_map keys={list(self._label_to_int.keys())}")
+            y = int(self._label_to_int[key])
             label = torch.tensor(y, dtype=torch.long)
 
         elif self.task_type == "regression":

@@ -58,9 +58,9 @@ def cross_validation_mil(
         s = str(lbl).strip()
         # 支援原有的 Yes/No 以及新的 CD19pos/neg
         if s in ['Yes', 'CD19pos', '1', '1.0', 'OR']:
-            label_map[lbl] = 1
+            label_map[s] = 1
         elif s in ['No', 'CD19neg', '0', '0.0', 'NR']:
-            label_map[lbl] = 0
+            label_map[s] = 0
 
     print(f"[INFO] Final Mapping: {label_map}")
 
