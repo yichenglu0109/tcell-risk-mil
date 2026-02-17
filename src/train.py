@@ -64,22 +64,6 @@ def cross_validation_mil(
     
     print(f"[INFO] Final Mapping: {label_map}")
 
-    # ===== DEBUG: check mapping consistency =====
-    print("[DEBUG] raw_labels (from adata.obs):", sorted([str(x).strip() for x in raw_labels])[:20], "...")
-    print("[DEBUG] label_map keys:", sorted(label_map.keys()))
-    print("[DEBUG] full_dataset._label_to_int (dataset auto):", getattr(full_dataset, "_label_to_int", None))
-
-    # show a few patient-level raw labels
-    for p in patients[:10]:
-        print("[DEBUG] example patient label:", p, "->", full_dataset.patient_labels[p])
-
-    # sanity: all patient labels must be in label_map
-    missing = [v for v in y_pat_raw[:50] if v not in label_map]  # check first 50
-    if len(missing) > 0:
-        print("[ERROR] Some patient labels not in label_map:", missing[:10])
-        print("[ERROR] unique missing:", sorted(set(missing))[:20])
-    # ===========================================
-
     # # ---- FIX: freeze label_map globally so folds are consistent ----
     # label_map = full_dataset._label_to_int
     # print("[INFO] Global label_map:", label_map)
@@ -96,6 +80,22 @@ def cross_validation_mil(
     # map to int labels
     y_pat = np.array([label_map[v] for v in y_pat_raw], dtype=int)
 
+    # ===== DEBUG: check mapping consistency =====
+    print("[DEBUG] raw_labels (from adata.obs):", sorted([str(x).strip() for x in raw_labels])[:20], "...")
+    print("[DEBUG] label_map keys:", sorted(label_map.keys()))
+    print("[DEBUG] full_dataset._label_to_int (dataset auto):", getattr(full_dataset, "_label_to_int", None))
+
+    # show a few patient-level raw labels
+    for p in patients[:10]:
+        print("[DEBUG] example patient label:", p, "->", full_dataset.patient_labels[p])
+
+    # sanity: all patient labels must be in label_map
+    missing = [v for v in y_pat_raw[:50] if v not in label_map]  # check first 50
+    if len(missing) > 0:
+        print("[ERROR] Some patient labels not in label_map:", missing[:10])
+        print("[ERROR] unique missing:", sorted(set(missing))[:20])
+    # ===========================================
+    
     print(f"[INFO] patients={len(patients)} | class_counts={dict(zip(*np.unique(y_pat, return_counts=True)))}")
 
     # ---- prepare splits ----
