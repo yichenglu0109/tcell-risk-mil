@@ -188,7 +188,7 @@ def cross_validation_mil(
             optimizer,
             mode="min",
             patience=5,     # loss 5 個 epoch 沒改善就降 LR
-            factor=0.5
+            factor=0.5,
             min_lr=1e-6,
             verbose=False,
         )
@@ -277,7 +277,7 @@ def cross_validation_mil(
 
                 model.train()
             # =====================
-            
+
             scheduler.step(train_loss)
         
             if (epoch + 1) % 20 == 0:
