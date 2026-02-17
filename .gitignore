@@ -1,4 +1,5 @@
-__pycache__/
+src/train_tcellMIL.ipynb
+_pycache__/
 .ipynb_checkpoints/
 .DS_Store
 *.pth
