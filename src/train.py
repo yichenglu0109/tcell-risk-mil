@@ -12,6 +12,7 @@ from src.Dataset import PatientBagDataset, preprocess_data, load_and_explore_dat
 from src.Autoencoder import train_autoencoder, evaluate_autoencoder
 from src.MIL import AttentionMIL
 from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import balanced_accuracy_score
 
 def cross_validation_mil(
     adata,
@@ -270,6 +271,9 @@ def cross_validation_mil(
                 train_preds = []
                 train_trues = []
 
+                bal_acc = balanced_accuracy_score(train_trues, train_preds)
+                print(f"  balanced_acc={bal_acc:.4f}")
+
                 model.eval()
                 with torch.no_grad():
                     for batch in train_loader:
@@ -302,16 +306,59 @@ def cross_validation_mil(
             if (epoch + 1) % 20 == 0:
                 print(f"[Fold {fold}] ep={epoch+1}/{num_epochs} train_loss={train_loss:.4f} train_acc={train_acc:.4f}")
 
-            # early stopping on train_loss (since no val set)
+            best_bal_acc = 0.0
+            eval_every = 5               
+
+            # # early stopping on train_loss (since no val set)
+            # if train_loss < best_train_loss - min_delta:
+            #     best_train_loss = train_loss
+            #     epochs_without_improvement = 0
+            #     torch.save(model.state_dict(), os.path.join(fold_save_path, "best_model.pth"))
+            # else:
+            #     epochs_without_improvement += 1
+            #     if epochs_without_improvement >= patience:
+            #         print(f"[Fold {fold}] Early stopping at ep={epoch+1}")
+            #         break
+
+            # ====== checkpoint selection (balanced acc) ======
+            if (epoch + 1) % eval_every == 0:
+                model.eval()
+                train_preds = []
+                train_trues = []
+                with torch.no_grad():
+                    for batch in train_loader:
+                        if len(batch) == 4:
+                            bags, batch_labels, _pids, _ = batch
+                        else:
+                            bags, batch_labels, _pids = batch
+
+                        bags = [bag.to(device) for bag in bags]
+                        batch_labels = batch_labels.to(device).long().view(-1)
+
+                        out = model(bags)
+                        logits = out["logits"]
+                        preds = torch.argmax(logits, dim=1)
+
+                        train_preds.extend(preds.cpu().numpy().tolist())
+                        train_trues.extend(batch_labels.cpu().numpy().tolist())
+
+                bal_acc = balanced_accuracy_score(train_trues, train_preds)
+                if bal_acc > best_bal_acc + 1e-4:   # 小 margin 防抖
+                    best_bal_acc = bal_acc
+                    torch.save(model.state_dict(), os.path.join(fold_save_path, "best_model.pth"))
+                model.train()
+            # ===============================================
+
+            # ====== early stopping (train loss) ======
             if train_loss < best_train_loss - min_delta:
                 best_train_loss = train_loss
                 epochs_without_improvement = 0
-                torch.save(model.state_dict(), os.path.join(fold_save_path, "best_model.pth"))
             else:
                 epochs_without_improvement += 1
                 if epochs_without_improvement >= patience:
                     print(f"[Fold {fold}] Early stopping at ep={epoch+1}")
                     break
+            # ========================================
 
         # load best
         model.load_state_dict(torch.load(os.path.join(fold_save_path, "best_model.pth"), map_location=device))
