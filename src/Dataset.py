@@ -15,7 +15,7 @@ def load_and_explore_data(file_path):
     adata = sc.read_h5ad(file_path)
 
     # shift adata.X to -0.5 to 0.5
-    # adata.X = (adata.X - 0.5) * 2
+    adata.X = (adata.X - 0.5) * 2
 
     # Print basic information
     print(f"Total cells: {adata.n_obs}")

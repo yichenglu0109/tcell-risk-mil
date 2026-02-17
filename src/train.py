@@ -20,7 +20,7 @@ def cross_validation_mil(
     hidden_dim=128,
     sample_source_dim=4,
     num_epochs=50,
-    learning_rate=5e-3,
+    learning_rate=5e-4,
     weight_decay=1e-2,
     save_path="results",
     label_col="Response_3m",
@@ -61,8 +61,24 @@ def cross_validation_mil(
             label_map[s] = 1
         elif s in ['No', 'CD19neg', '0', '0.0', 'NR']:
             label_map[s] = 0
-
+    
     print(f"[INFO] Final Mapping: {label_map}")
+
+    # ===== DEBUG: check mapping consistency =====
+    print("[DEBUG] raw_labels (from adata.obs):", sorted([str(x).strip() for x in raw_labels])[:20], "...")
+    print("[DEBUG] label_map keys:", sorted(label_map.keys()))
+    print("[DEBUG] full_dataset._label_to_int (dataset auto):", getattr(full_dataset, "_label_to_int", None))
+
+    # show a few patient-level raw labels
+    for p in patients[:10]:
+        print("[DEBUG] example patient label:", p, "->", full_dataset.patient_labels[p])
+
+    # sanity: all patient labels must be in label_map
+    missing = [v for v in y_pat_raw[:50] if v not in label_map]  # check first 50
+    if len(missing) > 0:
+        print("[ERROR] Some patient labels not in label_map:", missing[:10])
+        print("[ERROR] unique missing:", sorted(set(missing))[:20])
+    # ===========================================
 
     # # ---- FIX: freeze label_map globally so folds are consistent ----
     # label_map = full_dataset._label_to_int
@@ -177,6 +193,13 @@ def cross_validation_mil(
             verbose=False,
         )
         print("[DEBUG] class_weights:", class_weights.detach().cpu().numpy())
+        
+        # ===== DEBUG: define positive class index consistently =====
+        # If you define positive label as the one mapped to 1, then pos_idx = 1.
+        pos_idx = 1
+        neg_idx = 0
+        print(f"[DEBUG] Using pos_idx={pos_idx} (positive class), neg_idx={neg_idx}")
+        # ===========================================
 
         # ---- training ----
         best_train_loss = float("inf")
@@ -275,11 +298,19 @@ def cross_validation_mil(
                 true_label = int(batch_labels.cpu().numpy()[0])
                 pred_label = int(preds.cpu().numpy()[0])
 
+                # ===== DEBUG: inspect logits/probs per test patient =====
+                logits_np = logits.detach().cpu().numpy()[0]
+                probs_np  = probs.detach().cpu().numpy()[0]
+                print(f"[DEBUG][Fold {fold}] pid={patient_id} true={true_label} pred={pred_label} "
+                    f"logits={np.round(logits_np, 4)} probs={np.round(probs_np, 4)} "
+                    f"pos_prob(probs[{pos_idx}])={probs_np[pos_idx]:.4f}")
+                # ===========================================
+
                 if num_classes == 2:
-                    pos_prob = float(probs.cpu().numpy()[0, 1])
+                    pos_prob = float(probs_np[pos_idx])
                     all_prediction_probs.append(pos_prob)
                 else:
-                    all_prediction_probs.append(probs.cpu().numpy()[0])
+                    all_prediction_probs.append(probs_np)
 
                 all_true_labels.append(true_label)
                 all_predicted_labels.append(pred_label)
