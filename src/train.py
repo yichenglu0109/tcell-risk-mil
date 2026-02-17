@@ -187,8 +187,8 @@ def cross_validation_mil(
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode="min",
-            patience=12,     # loss 5 個 epoch 沒改善就降 LR
-            factor=0.5,
+            patience=5,     # loss 5 個 epoch 沒改善就降 LR
+            factor=0.5
             min_lr=1e-6,
             verbose=False,
         )
@@ -204,7 +204,7 @@ def cross_validation_mil(
         # ---- training ----
         best_train_loss = float("inf")
         epochs_without_improvement = 0
-        patience = 25          
+        patience = 10          
         min_delta = 1e-5
 
         for epoch in range(num_epochs):
@@ -244,6 +244,40 @@ def cross_validation_mil(
             train_loss /= max(len(train_loader), 1)
             train_acc = train_correct / train_total if train_total > 0 else 0.0
 
+            # ===== ADD THIS =====
+            if (epoch + 1) % 10 == 0:
+                print(f"[Fold {fold}] Train label distribution:")
+
+                train_preds = []
+                train_trues = []
+
+                model.eval()
+                with torch.no_grad():
+                    for batch in train_loader:
+                        if len(batch) == 4:
+                            bags, batch_labels, _pids, _ = batch
+                        else:
+                            bags, batch_labels, _pids = batch
+
+                        bags = [bag.to(device) for bag in bags]
+                        batch_labels = batch_labels.to(device).long().view(-1)
+
+                        out = model(bags)
+                        logits = out["logits"]
+                        preds = torch.argmax(logits, dim=1)
+
+                        train_preds.extend(preds.cpu().numpy().tolist())
+                        train_trues.extend(batch_labels.cpu().numpy().tolist())
+
+                train_preds = np.array(train_preds)
+                train_trues = np.array(train_trues)
+
+                print("  True counts:", np.bincount(train_trues))
+                print("  Pred counts:", np.bincount(train_preds))
+
+                model.train()
+            # =====================
+            
             scheduler.step(train_loss)
         
             if (epoch + 1) % 20 == 0:
@@ -283,7 +317,7 @@ def cross_validation_mil(
                 #     out = model(bags, sample_source=one_hot, return_attention=want_attn)
                 # else:
                 #     out = model(bags, return_attention=want_attn)
-                out = model(bags)
+                out = model(bags, return_attention=want_attn)
 
                 logits = out["logits"]
                 probs = F.softmax(logits, dim=1)
@@ -291,6 +325,18 @@ def cross_validation_mil(
 
                 if want_attn and ("attn" in out):
                     attn_weights = out["attn"]
+
+                    # ===== ADD THESE LINES (DEBUG PRINT) =====
+                    w0 = attn_weights[0]  # 因為 batch_size=1，所以看第 0 個 bag 的 attention
+                    if w0 is None:
+                        print(f"[DEBUG] patient {patient_id}: attn is None")
+                    else:
+                        w0_np = w0.detach().cpu().numpy().reshape(-1)  # flatten
+                        print(f"[DEBUG] patient {patient_id}: attn_var={np.var(w0_np):.8f}, "
+                            f"max={w0_np.max():.6f}, min={w0_np.min():.6f}, "
+                            f"sum={w0_np.sum():.6f}, n={w0_np.size}")
+                    # =========================================
+
                     cv_results["attention_weights"][patient_id] = [
                         (w.cpu().numpy() if w is not None else None) for w in attn_weights
                     ]
