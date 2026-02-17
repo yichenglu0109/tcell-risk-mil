@@ -96,6 +96,25 @@ def cross_validation_mil(
         print("[ERROR] unique missing:", sorted(set(missing))[:20])
     # ===========================================
     
+    # ===== CHECK: what does label=1 correspond to (patient-level) =====
+    pat_tbl = (
+        adata.obs.groupby("patient_id")[label_col]
+        .first()
+        .astype(str).str.strip()
+    )
+    print("\n[CHECK] patient-level raw label counts:")
+    print(pat_tbl.value_counts(dropna=False))
+
+    # show label=1 mapping strings (for transparency)
+    inv_map = {}
+    for k,v in label_map.items():
+        inv_map.setdefault(v, []).append(k)
+    print("[CHECK] label_map inverse:", inv_map)
+
+    # sanity: mean label by raw string (only if binary-ish)
+    # (just to see if something weird)
+    # ================================================================
+
     print(f"[INFO] patients={len(patients)} | class_counts={dict(zip(*np.unique(y_pat, return_counts=True)))}")
 
     # ---- prepare splits ----
@@ -395,6 +414,13 @@ def cross_validation_mil(
         print("\n[DEBUG] AUC(prob) =", auc_prob)
         print("[DEBUG] AUC(1-prob) =", auc_flip)
         print("[DEBUG] sum =", auc_prob + auc_flip)
+
+        # ===== CHECK: mean pos_prob by true label =====
+        m1 = all_prediction_probs[all_true_labels == 1].mean() if (all_true_labels==1).any() else np.nan
+        m0 = all_prediction_probs[all_true_labels == 0].mean() if (all_true_labels==0).any() else np.nan
+        print(f"[CHECK] mean(pos_prob | y=1)={m1:.4f}  mean(pos_prob | y=0)={m0:.4f}")
+        # =============================================
+        
         # =====================================
         overall_precision = precision_score(all_true_labels, all_predicted_labels, zero_division=0)
         overall_recall = recall_score(all_true_labels, all_predicted_labels, zero_division=0)
