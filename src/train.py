@@ -12,7 +12,7 @@ from src.Dataset import PatientBagDataset, preprocess_data, load_and_explore_dat
 from src.Autoencoder import train_autoencoder, evaluate_autoencoder
 from src.MIL import AttentionMIL
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import balanced_accuracy_score
+from sklearn.metrics import balanced_accuracy_score, accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, average_precision_score, confusion_matrix
 
 def cross_validation_mil(
     adata,
@@ -158,6 +158,13 @@ def cross_validation_mil(
 
         print(f"\n[Fold {fold}/{len(splits)}] train={len(train_pids)} test={len(test_pids)} "
               f"test_events/pos={(y_pat[te_idx]==1).sum() if num_classes==2 else 'NA'}")
+        
+        # ===== NEW: per-fold accumulators (test set only) =====
+        fold_true = []
+        fold_pred = []
+        fold_prob = []   # store pos prob for binary
+        fold_pid  = []
+        # ======================================================
 
         # build fold datasets (slice by patient_id)
         train_dataset = PatientBagDataset(
@@ -428,6 +435,14 @@ def cross_validation_mil(
                 all_predicted_labels.append(pred_label)
                 all_patient_ids.append(patient_id)
 
+                # ===== NEW: store fold-level outputs =====
+                fold_true.append(true_label)
+                fold_pred.append(pred_label)
+                fold_pid.append(patient_id)
+                if num_classes == 2:
+                    fold_prob.append(float(probs_np[pos_idx]))
+                # ========================================
+
                 cv_results["patient_predictions"][patient_id] = {
                     "true_label": true_label,
                     "predicted_label": pred_label,
@@ -444,6 +459,34 @@ def cross_validation_mil(
                     "predicted_label": pred_label,
                     "prob_positive": float(probs.cpu().numpy()[0, 1]) if num_classes == 2 else None,
                 })
+                
+        # ===== NEW: per-fold summary metrics =====
+        fold_true_np = np.array(fold_true, dtype=int)
+        fold_pred_np = np.array(fold_pred, dtype=int)
+
+        fold_acc = accuracy_score(fold_true_np, fold_pred_np)
+        fold_prec = precision_score(fold_true_np, fold_pred_np, zero_division=0)
+        fold_rec  = recall_score(fold_true_np, fold_pred_np, zero_division=0)
+        fold_f1   = f1_score(fold_true_np, fold_pred_np, zero_division=0)
+
+        # AUC needs probabilities + both classes present in this fold
+        if num_classes == 2 and len(np.unique(fold_true_np)) > 1:
+            fold_prob_np = np.array(fold_prob, dtype=float)
+            fold_auc = roc_auc_score(fold_true_np, fold_prob_np)
+            fold_pr_auc = average_precision_score(fold_true_np, fold_prob_np)
+        else:
+            fold_auc = float("nan")
+            fold_pr_auc = float("nan")
+
+        print(f"\nFold {fold} Results:")
+        print(f"Accuracy: {fold_acc:.4f}, Precision: {fold_prec:.4f}, Recall: {fold_rec:.4f}, F1: {fold_f1:.4f}")
+        if num_classes == 2:
+            print(f"AUC: {fold_auc:.4f}" if np.isfinite(fold_auc) else "AUC: NA")
+            print(f"PR-AUC: {fold_pr_auc:.4f}" if np.isfinite(fold_pr_auc) else "PR-AUC: NA")
+
+        # (optional) fold confusion matrix
+        # print("Fold Confusion Matrix:\n", confusion_matrix(fold_true_np, fold_pred_np))
+        # =========================================
 
     # ---- overall metrics (OOF) ----
     all_true_labels = np.array(all_true_labels, dtype=int)
