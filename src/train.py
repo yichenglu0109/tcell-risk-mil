@@ -278,9 +278,6 @@ def cross_validation_mil(
                 train_preds = []
                 train_trues = []
 
-                bal_acc = balanced_accuracy_score(train_trues, train_preds)
-                print(f"  balanced_acc={bal_acc:.4f}")
-
                 model.eval()
                 with torch.no_grad():
                     for batch in train_loader:
@@ -302,6 +299,9 @@ def cross_validation_mil(
                 train_preds = np.array(train_preds)
                 train_trues = np.array(train_trues)
 
+                bal_acc = balanced_accuracy_score(train_trues, train_preds)
+                print(f"  balanced_acc={bal_acc:.4f}")
+
                 print("  True counts:", np.bincount(train_trues))
                 print("  Pred counts:", np.bincount(train_preds))
 
@@ -310,7 +310,7 @@ def cross_validation_mil(
 
             scheduler.step(train_loss)
         
-            if (epoch + 1) % 20 == 0:
+            if (epoch + 1) % 10 == 0:
                 print(f"[Fold {fold}] ep={epoch+1}/{num_epochs} train_loss={train_loss:.4f} train_acc={train_acc:.4f}")
 
             best_bal_acc = 0.0
@@ -459,7 +459,7 @@ def cross_validation_mil(
                     "predicted_label": pred_label,
                     "prob_positive": float(probs.cpu().numpy()[0, 1]) if num_classes == 2 else None,
                 })
-                
+
         # ===== NEW: per-fold summary metrics =====
         fold_true_np = np.array(fold_true, dtype=int)
         fold_pred_np = np.array(fold_pred, dtype=int)

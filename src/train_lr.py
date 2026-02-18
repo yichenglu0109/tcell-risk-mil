@@ -28,63 +28,41 @@ def safe_metric(metric_fn, y_true, y_score):
     return metric_fn(y_true, y_score)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--h5ad", required=True, help="Path to .h5ad (cell x feature) with obs metadata")
-    ap.add_argument("--patient_col", default="patient_id")
-    ap.add_argument("--label_col", required=True, help="Binary label column in adata.obs")
-    ap.add_argument("--label_map", default=None,
-                    help='Optional JSON mapping, e.g. \'{"NO":0,"YES":1}\' (string)')
-
-    # Normalize to match your load_and_explore_data(): (X-0.5)*2
-    ap.add_argument("--normalize", action="store_true", default=True,
-                    help="Apply (X - 0.5) * 2 to adata.X (default: True)")
-    ap.add_argument("--no_normalize", action="store_true",
-                    help="Disable normalization (overrides --normalize)")
-
-    # (Optional) Sample_source one-hot
-    ap.add_argument("--use_sample_source", action="store_true",
-                    help="Append Sample_source one-hot to patient features (ONLY if Dataset.py supports it correctly)")
-    ap.add_argument("--sample_source_col", default="Sample_source")
-
-    # LR hyperparams
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--C", type=float, default=1.0, help="Inverse regularization strength")
-    ap.add_argument("--penalty", default="l2", choices=["l2"])
-    ap.add_argument("--solver", default="liblinear", choices=["liblinear", "lbfgs", "saga"])
-    ap.add_argument("--max_iter", type=int, default=2000)
-    ap.add_argument("--class_weight", default="balanced", choices=["balanced", "none"])
-    ap.add_argument("--no_standardize", action="store_true",
-                    help="Disable StandardScaler on patient-level features (default: standardize ON)")
-
-    ap.add_argument("--out_csv", default="lr_loocv_predictions.csv")
-    ap.add_argument("--out_json", default=None,
-                    help="Optional: save summary metrics to JSON (e.g. results_lr/lr_metrics.json)")
-    args = ap.parse_args()
-
+def run_lr_loocv(
+    h5ad: str,
+    label_col: str,
+    patient_col: str = "patient_id",
+    label_map: dict | None = None,
+    normalize: bool = True,
+    use_sample_source: bool = False,
+    sample_source_col: str = "Sample_source",
+    seed: int = 42,
+    C: float = 1.0,
+    penalty: str = "l2",
+    solver: str = "liblinear",
+    max_iter: int = 2000,
+    class_weight: str = "balanced",   # "balanced" or "none"
+    standardize: bool = True,         # True = use StandardScaler
+    out_csv: str | None = "lr_loocv_predictions.csv",
+    out_json: str | None = None,
+):
     # ---- load ----
-    adata = sc.read_h5ad(args.h5ad)
+    adata = sc.read_h5ad(h5ad)
 
     # ---- normalize ----
-    do_norm = args.normalize and (not args.no_normalize)
-    if do_norm:
+    if normalize:
         adata.X = (adata.X - 0.5) * 2
-
-    # ---- label_map ----
-    label_map = None
-    if args.label_map is not None:
-        label_map = json.loads(args.label_map)
 
     # ---- dataset (patient bags) ----
     ds = PatientBagDataset(
         adata=adata,
-        patient_col=args.patient_col,
+        patient_col=patient_col,
         task_type="classification",
-        label_col=args.label_col,
+        label_col=label_col,
         label_map=label_map,
         drop_missing=True,
-        use_sample_source=args.use_sample_source,
-        sample_source_col=args.sample_source_col,
+        use_sample_source=use_sample_source,
+        sample_source_col=sample_source_col,
     )
 
     # ---- build patient-level X, y ----
@@ -114,15 +92,15 @@ def main():
     print(f"[INFO] Patients used: {len(pids)}")
     print(f"[INFO] Feature dim: {X.shape[1]}")
     print(f"[INFO] Class counts: {pd.Series(y).value_counts().to_dict()}")
-    print(f"[INFO] Normalization: {'(X-0.5)*2' if do_norm else 'OFF'}")
-    print(f"[INFO] Standardize: {'OFF' if args.no_standardize else 'ON'}")
+    print(f"[INFO] Normalization: {'(X-0.5)*2' if normalize else 'OFF'}")
+    print(f"[INFO] Standardize: {'ON' if standardize else 'OFF'}")
 
     # ---- LOOCV ----
     loo = LeaveOneOut()
     y_prob = np.zeros(len(y), dtype=float)
     y_pred = np.zeros(len(y), dtype=int)
 
-    cw = None if args.class_weight == "none" else "balanced"
+    cw = None if class_weight == "none" else "balanced"
 
     for train_idx, test_idx in loo.split(X):
         X_tr, X_te = X[train_idx], X[test_idx]
@@ -137,29 +115,34 @@ def main():
             continue
 
         lr = LogisticRegression(
-            C=args.C,
-            penalty=args.penalty,
-            solver=args.solver,
-            max_iter=args.max_iter,
+            C=C,
+            penalty=penalty,
+            solver=solver,
+            max_iter=max_iter,
             class_weight=cw,
-            random_state=args.seed,
+            random_state=seed,
         )
 
-        if args.no_standardize:
-            model = lr
-        else:
+        if standardize:
             model = Pipeline([
                 ("scaler", StandardScaler(with_mean=True, with_std=True)),
                 ("lr", lr),
             ])
+        else:
+            model = lr
 
         model.fit(X_tr, y_tr)
 
         prob = model.predict_proba(X_te)[0]
-        # Pipeline doesn't expose classes_ directly; grab from final estimator
-        classes = model.classes_ if hasattr(model, "classes_") else model.named_steps["lr"].classes_
+
+        # Get class ordering robustly
+        if hasattr(model, "classes_"):
+            classes = model.classes_
+        else:
+            classes = model.named_steps["lr"].classes_
+
         cls_to_col = {c: j for j, c in enumerate(classes)}
-        p1 = prob[cls_to_col.get(1, np.argmax(prob))]
+        p1 = prob[cls_to_col.get(1, int(np.argmax(prob)))]
 
         y_prob[test_idx[0]] = float(p1)
         y_pred[test_idx[0]] = int(p1 >= 0.5)
@@ -198,56 +181,118 @@ def main():
     print(f"class_0: Precision={prec_by_class[0]:.4f}, Recall={rec_by_class[0]:.4f}, Count={int(support_by_class[0])}")
     print(f"class_1: Precision={prec_by_class[1]:.4f}, Recall={rec_by_class[1]:.4f}, Count={int(support_by_class[1])}")
 
-    # ---- save predictions ----
-    out = pd.DataFrame({
+    # ---- predictions df ----
+    out_pred = pd.DataFrame({
         "patient_id": pids,
         "y_true": y,
         "y_prob": y_prob,
         "y_pred": y_pred,
     }).sort_values("patient_id")
-    out.to_csv(args.out_csv, index=False)
-    print(f"\n[INFO] Saved predictions to: {args.out_csv}")
 
-    # ---- optional: save metrics json ----
-    if args.out_json is not None:
-        metrics = {
-            "patients_used": int(len(pids)),
-            "feature_dim": int(X.shape[1]),
-            "class_counts": {str(k): int(v) for k, v in pd.Series(y).value_counts().to_dict().items()},
-            "normalization": "(X-0.5)*2" if do_norm else "OFF",
-            "standardize": False if args.no_standardize else True,
-            "accuracy": float(acc),
-            "n_correct": int(n_correct),
-            "n_total": int(n_total),
-            "precision_pos": float(overall_precision),
-            "recall_pos": float(overall_recall),
-            "f1_pos": float(overall_f1),
-            "auroc": None if not np.isfinite(overall_auc) else float(overall_auc),
-            "pr_auc": None if not np.isfinite(overall_pr_auc) else float(overall_pr_auc),
-            "confusion_matrix": cm.tolist(),
-            "lr_params": {
-                "C": float(args.C),
-                "penalty": args.penalty,
-                "solver": args.solver,
-                "max_iter": int(args.max_iter),
-                "class_weight": args.class_weight,
-            },
-            "class_0": {
-                "precision": float(prec_by_class[0]),
-                "recall": float(rec_by_class[0]),
-                "f1": float(f1_by_class[0]),
-                "count": int(support_by_class[0]),
-            },
-            "class_1": {
-                "precision": float(prec_by_class[1]),
-                "recall": float(rec_by_class[1]),
-                "f1": float(f1_by_class[1]),
-                "count": int(support_by_class[1]),
-            },
-        }
-        with open(args.out_json, "w") as f:
+    if out_csv is not None:
+        out_pred.to_csv(out_csv, index=False)
+        print(f"\n[INFO] Saved predictions to: {out_csv}")
+
+    metrics = {
+        "patients_used": int(len(pids)),
+        "feature_dim": int(X.shape[1]),
+        "class_counts": {str(k): int(v) for k, v in pd.Series(y).value_counts().to_dict().items()},
+        "normalization": "(X-0.5)*2" if normalize else "OFF",
+        "standardize": bool(standardize),
+        "accuracy": float(acc),
+        "n_correct": int(n_correct),
+        "n_total": int(n_total),
+        "precision_pos": float(overall_precision),
+        "recall_pos": float(overall_recall),
+        "f1_pos": float(overall_f1),
+        "auroc": None if not np.isfinite(overall_auc) else float(overall_auc),
+        "pr_auc": None if not np.isfinite(overall_pr_auc) else float(overall_pr_auc),
+        "confusion_matrix": cm.tolist(),
+        "lr_params": {
+            "C": float(C),
+            "penalty": str(penalty),
+            "solver": str(solver),
+            "max_iter": int(max_iter),
+            "class_weight": str(class_weight),
+        },
+        "class_0": {
+            "precision": float(prec_by_class[0]),
+            "recall": float(rec_by_class[0]),
+            "f1": float(f1_by_class[0]),
+            "count": int(support_by_class[0]),
+        },
+        "class_1": {
+            "precision": float(prec_by_class[1]),
+            "recall": float(rec_by_class[1]),
+            "f1": float(f1_by_class[1]),
+            "count": int(support_by_class[1]),
+        },
+    }
+
+    if out_json is not None:
+        with open(out_json, "w") as f:
             json.dump(metrics, f, indent=2)
-        print(f"[INFO] Saved metrics to: {args.out_json}")
+        print(f"[INFO] Saved metrics to: {out_json}")
+
+    return out_pred, metrics
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--h5ad", required=True, help="Path to .h5ad (cell x feature) with obs metadata")
+    ap.add_argument("--patient_col", default="patient_id")
+    ap.add_argument("--label_col", required=True, help="Binary label column in adata.obs")
+    ap.add_argument("--label_map", default=None,
+                    help='Optional JSON mapping, e.g. \'{"NO":0,"YES":1}\' (string)')
+
+    ap.add_argument("--normalize", action="store_true", default=True,
+                    help="Apply (X - 0.5) * 2 to adata.X (default: True)")
+    ap.add_argument("--no_normalize", action="store_true",
+                    help="Disable normalization (overrides --normalize)")
+
+    ap.add_argument("--use_sample_source", action="store_true",
+                    help="Append Sample_source one-hot to patient features (ONLY if Dataset.py supports it correctly)")
+    ap.add_argument("--sample_source_col", default="Sample_source")
+
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--C", type=float, default=1.0, help="Inverse regularization strength")
+    ap.add_argument("--penalty", default="l2", choices=["l2"])
+    ap.add_argument("--solver", default="liblinear", choices=["liblinear", "lbfgs", "saga"])
+    ap.add_argument("--max_iter", type=int, default=2000)
+    ap.add_argument("--class_weight", default="balanced", choices=["balanced", "none"])
+    ap.add_argument("--no_standardize", action="store_true",
+                    help="Disable StandardScaler on patient-level features (default: standardize ON)")
+
+    ap.add_argument("--out_csv", default="lr_loocv_predictions.csv")
+    ap.add_argument("--out_json", default=None,
+                    help="Optional: save summary metrics to JSON (e.g. results_lr/lr_metrics.json)")
+    args = ap.parse_args()
+
+    label_map = None
+    if args.label_map is not None:
+        label_map = json.loads(args.label_map)
+
+    do_norm = args.normalize and (not args.no_normalize)
+    standardize = (not args.no_standardize)
+
+    run_lr_loocv(
+        h5ad=args.h5ad,
+        label_col=args.label_col,
+        patient_col=args.patient_col,
+        label_map=label_map,
+        normalize=do_norm,
+        use_sample_source=args.use_sample_source,
+        sample_source_col=args.sample_source_col,
+        seed=args.seed,
+        C=args.C,
+        penalty=args.penalty,
+        solver=args.solver,
+        max_iter=args.max_iter,
+        class_weight=args.class_weight,
+        standardize=standardize,
+        out_csv=args.out_csv,
+        out_json=args.out_json,
+    )
 
 
 if __name__ == "__main__":

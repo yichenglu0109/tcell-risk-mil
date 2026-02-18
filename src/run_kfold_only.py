@@ -11,6 +11,9 @@ def run_kfold(
     num_epochs=60,
     label_col="relapse_y_n",
     aggregator="attention",
+    topk=0,
+    tau=0.0,
+    cv="kfold",
     k=5,
     seed=42,
 ):
@@ -31,7 +34,9 @@ def run_kfold(
         num_epochs=num_epochs,
         label_col=label_col,
         aggregator=aggregator,
-        cv="kfold",
+        topk=topk,
+        tau=tau,
+        cv=cv,
         k=k,
         seed=seed,
         save_path=output_dir,
@@ -39,8 +44,6 @@ def run_kfold(
 
     return results
 
-
-# 👇 只有在直接 python 執行時才會跑
 if __name__ == "__main__":
 
     input_file = "path/to/your_file.h5ad"
