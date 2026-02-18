@@ -108,8 +108,8 @@ def cross_validation_mil(
 
     # show label=1 mapping strings (for transparency)
     inv_map = {}
-    for k,v in label_map.items():
-        inv_map.setdefault(v, []).append(k)
+    for lbl,v in label_map.items():
+        inv_map.setdefault(v, []).append(lbl)
     print("[CHECK] label_map inverse:", inv_map)
 
     # sanity: mean label by raw string (only if binary-ish)
