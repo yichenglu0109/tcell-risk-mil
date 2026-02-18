@@ -1,6 +1,7 @@
 import os, json, time
 from datetime import datetime
 import numpy as np
+from typing import Optional
 
 def _to_jsonable(x):
     if isinstance(x, (np.integer,)): return int(x)
@@ -13,7 +14,7 @@ def append_jsonl(path: str, record: dict):
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, default=_to_jsonable, ensure_ascii=False) + "\n")
 
-def log_cv_run(jsonl_path: str, params: dict, cv_results: dict, extra: dict | None = None):
+def log_cv_run(jsonl_path: str, params: dict, cv_results: dict, extra: Optional[dict] = None):
     """
     params: 你這次 run 的超參數/設定
     cv_results: cross_validation_mil 回傳的 dict
