@@ -131,6 +131,7 @@ class PatientBagDataset(Dataset):
         label_map=None,  # optional: {"NR":0,"OR":1} or custom
         drop_missing=True,
         use_sample_source=True,  # keep your one-hot covariate
+        cache_bags=True,  # whether to precompute patient bags in memory (can be large)
         sample_source_col="Sample_source"
     ):
         """
@@ -152,6 +153,7 @@ class PatientBagDataset(Dataset):
 
         # Always define metadata dict (avoid attribute missing)
         self.patient_metadata = {}
+        self.cache_bags = cache_bags
         self.sample_sources = None
 
         # # ---- sanity checks ----
@@ -229,15 +231,21 @@ class PatientBagDataset(Dataset):
         ##############################################
         self.patient_bags = {}
         self.patient_labels = {}
+        self.patient_indices = {}
         
         for patient in self.patients:
             # Get indices for this patient
             indices = np.where(adata.obs[self.patient_col].astype(str).to_numpy() == patient)[0]
+            self.patient_indices[patient] = indices
             
-            patient_data = adata.X[indices]
-            if not isinstance(patient_data, np.ndarray):
-                patient_data = patient_data.toarray()
-            self.patient_bags[patient] = patient_data
+            if self.cache_bags:
+                patient_data = adata.X[indices]
+                if not isinstance(patient_data, np.ndarray):
+                    patient_data = patient_data.toarray()
+                self.patient_bags[patient] = patient_data
+            else:
+                # lazy mode: 不在 init 先把 bag materialize 成 dense
+                self.patient_bags[patient] = None
 
             # patient-level label
             if self.task_type in {"classification", "regression"}:
@@ -293,7 +301,17 @@ class PatientBagDataset(Dataset):
         - patient: Patient identifier
         """
         patient = self.patient_list[idx]
-        bag = torch.FloatTensor(self.patient_bags[patient])
+
+        # ---- get bag (cached or lazy) ----
+        if self.cache_bags and (self.patient_bags.get(patient, None) is not None):
+            bag_np = self.patient_bags[patient]
+        else:
+            idxs = self.patient_indices[patient]
+            bag_np = self.adata.X[idxs]
+            if not isinstance(bag_np, np.ndarray):
+                bag_np = bag_np.toarray()  # only materialize this patient when needed
+
+        bag = torch.FloatTensor(bag_np)
         
         if self.task_type == "classification":
             key = str(self.patient_labels[patient]).strip()

@@ -31,6 +31,7 @@ def cross_validation_mil(
     cv="loocv",     # "loocv" or "kfold"
     k=5,
     seed=42,
+    store_attention=True,
 ):
     """
     Patient-level CV for MIL model.
@@ -135,7 +136,7 @@ def cross_validation_mil(
     cv_results = {
         "fold_metrics": [],
         "patient_predictions": {},
-        "attention_weights": {},
+        "attention_weights": {} if store_attention else None,
         "overall_metrics": None,
         "cv": cv,
         "k": int(k) if cv == "kfold" else None,
@@ -167,15 +168,29 @@ def cross_validation_mil(
         # ======================================================
 
         # build fold datasets (slice by patient_id)
+        train_mask = adata.obs["patient_id"].isin(train_pids).to_numpy()
+        test_mask  = adata.obs["patient_id"].isin(test_pids).to_numpy()
+
+        train_adata = adata[train_mask]   # view, no copy
+        test_adata  = adata[test_mask]    # view, no copy
+
         train_dataset = PatientBagDataset(
-            adata.copy()[adata.obs["patient_id"].isin(train_pids)],
+            train_adata,
+            task_type="classification",
             label_col=label_col,
             label_map=label_map,
+            drop_missing=False,          # fold 裡你已經決定 train_pids/test_pids 了
+            use_sample_source=False,     # 你目前在 MIL forward 其實沒用 sample_source（都註解掉）
+            cache_bags=False,           # 不要在 Dataset init 就把所有病人 bag materialize 成 dense（可能很大），改成 lazy 模式在 __getitem__ 時才 materialize（如果 cache_bags=False）
         )
         test_dataset = PatientBagDataset(
-            adata.copy()[adata.obs["patient_id"].isin(test_pids)],
+            test_adata,
+            task_type="classification",
             label_col=label_col,
             label_map=label_map,
+            drop_missing=False,
+            use_sample_source=False,
+            cache_bags=False,
         )
 
         # loaders
@@ -233,6 +248,8 @@ def cross_validation_mil(
         epochs_without_improvement = 0
         patience = 10          
         min_delta = 1e-5
+        best_bal_acc = 0.0
+        eval_every = 5 
 
         for epoch in range(num_epochs):
             model.train()
@@ -311,10 +328,7 @@ def cross_validation_mil(
             scheduler.step(train_loss)
         
             if (epoch + 1) % 10 == 0:
-                print(f"[Fold {fold}] ep={epoch+1}/{num_epochs} train_loss={train_loss:.4f} train_acc={train_acc:.4f}")
-
-            best_bal_acc = 0.0
-            eval_every = 5               
+                print(f"[Fold {fold}] ep={epoch+1}/{num_epochs} train_loss={train_loss:.4f} train_acc={train_acc:.4f}")              
 
             # # early stopping on train_loss (since no val set)
             # if train_loss < best_train_loss - min_delta:
@@ -399,20 +413,21 @@ def cross_validation_mil(
                 if want_attn and ("attn" in out):
                     attn_weights = out["attn"]
 
-                    # ===== ADD THESE LINES (DEBUG PRINT) =====
-                    w0 = attn_weights[0]  # 因為 batch_size=1，所以看第 0 個 bag 的 attention
+                    # (optional) debug print: OK 保留
+                    w0 = attn_weights[0]
                     if w0 is None:
                         print(f"[DEBUG] patient {patient_id}: attn is None")
                     else:
-                        w0_np = w0.detach().cpu().numpy().reshape(-1)  # flatten
+                        w0_np = w0.detach().cpu().numpy().reshape(-1)
                         print(f"[DEBUG] patient {patient_id}: attn_var={np.var(w0_np):.8f}, "
                             f"max={w0_np.max():.6f}, min={w0_np.min():.6f}, "
                             f"sum={w0_np.sum():.6f}, n={w0_np.size}")
-                    # =========================================
 
-                    cv_results["attention_weights"][patient_id] = [
-                        (w.cpu().numpy() if w is not None else None) for w in attn_weights
-                    ]
+                    # ✅ only store if requested
+                    if store_attention:
+                        cv_results["attention_weights"][patient_id] = [
+                            (w.detach().cpu().numpy() if w is not None else None) for w in attn_weights
+                        ]
 
                 true_label = int(batch_labels.cpu().numpy()[0])
                 pred_label = int(preds.cpu().numpy()[0])
@@ -557,12 +572,13 @@ def cross_validation_mil(
     print(conf_matrix)
 
     # save
-    tag = "loocv" if cv == "loocv" else f"kfold{k}"
-    results_path = os.path.join(save_path, f"{tag}_results.pkl")
-    with open(results_path, "wb") as f:
-        import pickle
-        pickle.dump(cv_results, f)
-    print(f"[INFO] Saved: {results_path}")
+    if save_path is not None:
+        tag = "loocv" if cv == "loocv" else f"kfold{k}"
+        results_path = os.path.join(save_path, f"{tag}_results.pkl")
+        with open(results_path, "wb") as f:
+            import pickle
+            pickle.dump(cv_results, f)
+        print(f"[INFO] Saved: {results_path}")
 
     return cv_results       
 
@@ -732,6 +748,7 @@ def run_pipeline_loocv(input_file, output_dir='results',
         cv=cv,
         k=k,
         seed=seed,
+        store_attention=False,
     )
 
     # wandb.finish()
