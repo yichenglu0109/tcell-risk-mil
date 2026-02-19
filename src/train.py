@@ -531,11 +531,13 @@ def cross_validation_mil(
         overall_recall = recall_score(all_true_labels, all_predicted_labels, zero_division=0)
         overall_f1 = f1_score(all_true_labels, all_predicted_labels, zero_division=0)
         overall_auc = roc_auc_score(all_true_labels, all_prediction_probs) if len(np.unique(all_true_labels)) > 1 else float("nan")
+        overall_auprc = average_precision_score(all_true_labels, all_prediction_probs) if len(np.unique(all_true_labels)) > 1 else float("nan")
     else:
         overall_precision = precision_score(all_true_labels, all_predicted_labels, average="weighted", zero_division=0)
         overall_recall = recall_score(all_true_labels, all_predicted_labels, average="weighted", zero_division=0)
         overall_f1 = f1_score(all_true_labels, all_predicted_labels, average="weighted", zero_division=0)
         overall_auc = float("nan")
+        overall_auprc = float("nan")
 
     conf_matrix = confusion_matrix(all_true_labels, all_predicted_labels)
 
@@ -556,6 +558,7 @@ def cross_validation_mil(
         "recall": float(overall_recall),
         "f1": float(overall_f1),
         "auc": float(overall_auc) if np.isfinite(overall_auc) else None,
+        "auprc": float(overall_auprc) if np.isfinite(overall_auprc) else None,
         "confusion_matrix": conf_matrix.tolist(),
         "class_metrics": class_metrics,
     }
@@ -568,6 +571,7 @@ def cross_validation_mil(
     print(f"Overall F1 Score: {overall_f1:.4f}")
     if num_classes == 2:
         print(f"Overall AUC: {overall_auc:.4f}" if np.isfinite(overall_auc) else "Overall AUC: NA")
+        print(f"Overall AUPRC: {overall_auprc:.4f}" if np.isfinite(overall_auprc) else "Overall AUPRC: NA")
     print("\nConfusion Matrix:")
     print(conf_matrix)
 
