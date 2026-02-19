@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 
+from typing import Optional, Dict
+
 from sklearn.model_selection import LeaveOneOut
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
@@ -32,7 +34,7 @@ def run_lr_loocv(
     h5ad: str,
     label_col: str,
     patient_col: str = "patient_id",
-    label_map: dict | None = None,
+    label_map: Optional[Dict[str, int]] = None,
     normalize: bool = True,
     use_sample_source: bool = False,
     sample_source_col: str = "Sample_source",

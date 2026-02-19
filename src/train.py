@@ -14,6 +14,35 @@ from src.MIL import AttentionMIL
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import balanced_accuracy_score, accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, average_precision_score, confusion_matrix
 
+# Helper function to find best threshold for binary classification based on a given metric (balanced accuracy or F1)
+def find_best_threshold(y_true, y_prob, metric="balanced_acc"):
+    import numpy as np
+    from sklearn.metrics import balanced_accuracy_score, f1_score
+
+    y_true = np.asarray(y_true).astype(int)
+    y_prob = np.asarray(y_prob).astype(float)
+
+    # candidate thresholds：用 unique prob 會比較精準；也可以用 linspace(0,1,101)
+    ths = np.unique(y_prob)
+    if ths.size > 2000:
+        ths = np.linspace(0, 1, 201)
+
+    best_th, best_score = 0.5, -1.0
+    for th in ths:
+        y_pred = (y_prob >= th).astype(int)
+        if metric == "balanced_acc":
+            score = balanced_accuracy_score(y_true, y_pred)
+        elif metric == "f1":
+            score = f1_score(y_true, y_pred, zero_division=0)
+        else:
+            raise ValueError("metric must be 'balanced_acc' or 'f1'")
+
+        if score > best_score:
+            best_score = score
+            best_th = float(th)
+
+    return best_th, float(best_score)
+
 def cross_validation_mil(
     adata,
     input_dim,
@@ -32,6 +61,7 @@ def cross_validation_mil(
     k=5,
     seed=42,
     store_attention=True,
+    tune_threshold=False,
 ):
     """
     Patient-level CV for MIL model.
@@ -232,7 +262,6 @@ def cross_validation_mil(
             patience=5,     # loss 5 個 epoch 沒改善就降 LR
             factor=0.5,
             min_lr=1e-6,
-            verbose=False,
         )
         print("[DEBUG] class_weights:", class_weights.detach().cpu().numpy())
         
@@ -385,6 +414,37 @@ def cross_validation_mil(
         model.load_state_dict(torch.load(os.path.join(fold_save_path, "best_model.pth"), map_location=device))
         model.eval()
 
+        # ===== A) tune threshold on TRAIN patients (after loading best_model) =====
+        # ===== A) (Optional) tune threshold on TRAIN patients (after loading best_model) =====
+        best_th = 0.5
+        best_th_score = None
+
+        if tune_threshold and num_classes == 2:
+            train_true = []
+            train_prob = []
+
+            with torch.no_grad():
+                for batch in train_loader:
+                    if len(batch) == 4:
+                        bags, batch_labels, patient_ids, _ = batch
+                    else:
+                        bags, batch_labels, patient_ids = batch
+
+                    bags = [bag.to(device) for bag in bags]
+                    y = int(batch_labels.detach().cpu().numpy()[0])
+
+                    out = model(bags, return_attention=False)
+                    probs = F.softmax(out["logits"], dim=1).detach().cpu().numpy()[0]
+                    p1 = float(probs[pos_idx])
+
+                    train_true.append(y)
+                    train_prob.append(p1)
+
+            best_th, best_th_score = find_best_threshold(train_true, train_prob, metric="balanced_acc")
+            print(f"[Fold {fold}] tuned_threshold={best_th:.4f} (train balanced_acc={best_th_score:.4f})")
+        # ========================================================================
+        # ========================================================================
+
         # ---- evaluate on test patients (OOF) ----
         with torch.no_grad():
             for batch in test_loader:
@@ -408,7 +468,19 @@ def cross_validation_mil(
 
                 logits = out["logits"]
                 probs = F.softmax(logits, dim=1)
-                preds = torch.argmax(logits, dim=1)
+
+                # === NEW: thresholded prediction (binary only) ===
+                probs_np = probs.detach().cpu().numpy()[0]   # shape: (2,)
+                pos_prob = float(probs_np[pos_idx])          # p(y=1)
+
+                if num_classes == 2:
+                    if tune_threshold:
+                        pred_label = 1 if (pos_prob >= best_th) else 0
+                    else:
+                        pred_label = int(np.argmax(probs_np))   # ✅ 原本的 argmax 行為
+                else:
+                    pred_label = int(np.argmax(probs_np))
+                # ===============================================
 
                 if want_attn and ("attn" in out):
                     attn_weights = out["attn"]
@@ -419,9 +491,11 @@ def cross_validation_mil(
                         print(f"[DEBUG] patient {patient_id}: attn is None")
                     else:
                         w0_np = w0.detach().cpu().numpy().reshape(-1)
-                        print(f"[DEBUG] patient {patient_id}: attn_var={np.var(w0_np):.8f}, "
+                        print(
+                            f"[DEBUG] patient {patient_id}: attn_var={np.var(w0_np):.8f}, "
                             f"max={w0_np.max():.6f}, min={w0_np.min():.6f}, "
-                            f"sum={w0_np.sum():.6f}, n={w0_np.size}")
+                            f"sum={w0_np.sum():.6f}, n={w0_np.size}"
+                        )
 
                     # ✅ only store if requested
                     if store_attention:
@@ -429,20 +503,20 @@ def cross_validation_mil(
                             (w.detach().cpu().numpy() if w is not None else None) for w in attn_weights
                         ]
 
-                true_label = int(batch_labels.cpu().numpy()[0])
-                pred_label = int(preds.cpu().numpy()[0])
+                true_label = int(batch_labels.detach().cpu().numpy()[0])
 
                 # ===== DEBUG: inspect logits/probs per test patient =====
                 logits_np = logits.detach().cpu().numpy()[0]
-                probs_np  = probs.detach().cpu().numpy()[0]
-                print(f"[DEBUG][Fold {fold}] pid={patient_id} true={true_label} pred={pred_label} "
+                print(
+                    f"[DEBUG][Fold {fold}] pid={patient_id} true={true_label} pred={pred_label} "
                     f"logits={np.round(logits_np, 4)} probs={np.round(probs_np, 4)} "
-                    f"pos_prob(probs[{pos_idx}])={probs_np[pos_idx]:.4f}")
+                    f"pos_prob(probs[{pos_idx}])={pos_prob:.4f}"
+                    + (f" th={best_th:.4f}" if (num_classes == 2) else "")
+                )
                 # ===========================================
 
                 if num_classes == 2:
-                    pos_prob = float(probs_np[pos_idx])
-                    all_prediction_probs.append(pos_prob)
+                    all_prediction_probs.append(pos_prob)   # keep probabilities for AUROC/AUPRC
                 else:
                     all_prediction_probs.append(probs_np)
 
@@ -450,20 +524,21 @@ def cross_validation_mil(
                 all_predicted_labels.append(pred_label)
                 all_patient_ids.append(patient_id)
 
-                # ===== NEW: store fold-level outputs =====
+                # ===== store fold-level outputs =====
                 fold_true.append(true_label)
                 fold_pred.append(pred_label)
                 fold_pid.append(patient_id)
                 if num_classes == 2:
-                    fold_prob.append(float(probs_np[pos_idx]))
-                # ========================================
+                    fold_prob.append(pos_prob)
+                # ==================================
 
                 cv_results["patient_predictions"][patient_id] = {
                     "true_label": true_label,
                     "predicted_label": pred_label,
-                    "probabilities": probs.cpu().numpy()[0].tolist(),
+                    "probabilities": probs.detach().cpu().numpy()[0].tolist(),
                     "correct": (pred_label == true_label),
                     "fold": fold,
+                    "threshold": (float(best_th) if (num_classes == 2 and tune_threshold) else None),
                 }
 
                 cv_results["fold_metrics"].append({
@@ -472,7 +547,8 @@ def cross_validation_mil(
                     "accuracy": 1.0 if pred_label == true_label else 0.0,
                     "true_label": true_label,
                     "predicted_label": pred_label,
-                    "prob_positive": float(probs.cpu().numpy()[0, 1]) if num_classes == 2 else None,
+                    "prob_positive": pos_prob if num_classes == 2 else None,
+                    "threshold": (float(best_th) if (num_classes == 2 and tune_threshold) else None),
                 })
 
         # ===== NEW: per-fold summary metrics =====
