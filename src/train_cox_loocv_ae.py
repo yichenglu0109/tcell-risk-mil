@@ -358,6 +358,7 @@ def main():
         k = int(args.k)
         risks = np.full(len(patients), np.nan, dtype=float)
         fold_losses = []
+        fold_cis = []
         skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=args.seed)
 
         for fold, (tr_idx, va_idx) in enumerate(skf.split(patients, event), start=1):
@@ -416,18 +417,26 @@ def main():
                 idx = np.where(patients == pid)[0][0]
                 risks[idx] = r
 
+            # ===== NEW: per-fold C-index on THIS fold's validation set =====
+            fold_risk = risks[va_idx]
+            val_events = int(event[va_idx].sum())
+            fold_ci = c_index(time_days[va_idx], event[va_idx], fold_risk)
+            fold_cis.append(float(fold_ci))
+            print(f"[{k}-fold] fold={fold} val_events={val_events} C-index={fold_ci:.4f}")
+
         if not np.isfinite(risks).all():
             bad = np.where(~np.isfinite(risks))[0]
             raise RuntimeError(f"Some patients missing out-of-fold predictions: idx={bad.tolist()}, pids={patients[bad].tolist()}")
 
     # ===== Evaluation summary =====
     ci = c_index(time_days, event, risks)
-    ci_flip = c_index(time_days, event, -risks)
 
     print("\n===== Cox CV Results =====")
     print(f"CV={args.cv} k={args.k if args.cv=='kfold' else 'NA'}")
     print(f"C-index (simple): {ci:.4f}")
-    print(f"C-index (simple, flipped): {ci_flip:.4f}")
+    if args.cv == "kfold":
+        print("Per-fold C-index:", [round(x, 4) for x in fold_cis])
+        print(f"Per-fold mean±std: {np.nanmean(fold_cis):.4f} ± {np.nanstd(fold_cis):.4f}")
     print("==========================\n")
 
     # ===== Optional: train final full-data model for perturbation =====
@@ -457,7 +466,7 @@ def main():
         full_model_loss = float(best_loss_full)
         print(f"[INFO] saved final model: {os.path.join(full_save_path, 'best_model.pth')} (loss={best_loss_full:.6f})")
 
-    print("\n===== Cox LOOCV Results =====")
+    print("\n===== Cox Overall OOF Results =====")
     ci = c_index(time_days, event, risks)
     print(f"C-index (simple): {ci:.4f}")
     print("=============================\n")
@@ -469,7 +478,7 @@ def main():
         "event": event.tolist(),
         "risk": risks.tolist(),                 # OOF risks
         "c_index": float(ci),
-        "c_index_flipped": float(ci_flip),
+        "fold_c_index": [float(x) for x in fold_cis] if args.cv == "kfold" else None,
         "fold_best_loss": [float(x) for x in fold_losses],
         "full_model_best_loss": full_model_loss,
         "use_ae": bool(args.use_ae),
