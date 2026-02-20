@@ -3,7 +3,7 @@ import os
 import scanpy as sc
 
 from src.logging_utils import log_cv_run
-from src.kfold_with_val import kfold_patient_cv_with_val  # 你把核心函數放這（下面我也給你）
+from train_kfold_with_val import kfold_patient_cv_with_val  # 你把核心函數放這（下面我也給你）
 
 
 def run_kfold_with_val(

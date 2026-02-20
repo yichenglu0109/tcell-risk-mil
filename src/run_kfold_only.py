@@ -40,7 +40,6 @@ def run_kfold(
         seed=seed,
         save_path=output_dir,
         store_attention=False,
-        tune_threshold=tune_threshold,
     )
 
     # ✅ append to jsonl
