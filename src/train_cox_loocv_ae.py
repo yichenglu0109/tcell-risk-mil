@@ -457,6 +457,11 @@ def main():
         full_model_loss = float(best_loss_full)
         print(f"[INFO] saved final model: {os.path.join(full_save_path, 'best_model.pth')} (loss={best_loss_full:.6f})")
 
+    print("\n===== Cox LOOCV Results =====")
+    ci = c_index(time_days, event, risks)
+    print(f"C-index (simple): {ci:.4f}")
+    print("=============================\n")
+
     # ===== Save outputs (match your current pattern) =====
     results = {
         "patients": patients.tolist(),
