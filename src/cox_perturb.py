@@ -8,6 +8,7 @@ import torch
 import scanpy as sc
 from tqdm import tqdm
 from scipy.stats import median_abs_deviation
+from typing import Optional, List, Dict
 
 from src.MIL import AttentionMIL
 from src.Autoencoder import Autoencoder  # 如果你 repo 裡 class 名稱不同，改這行
@@ -27,7 +28,7 @@ def _to_dense(x):
     return np.asarray(x)
 
 
-def parse_tfs_arg(tfs_arg: str | None, adata) -> list[str]:
+def parse_tfs_arg(tfs_arg: Optional[str], adata) -> List[str]:
     """
     --tfs:
       - None => ALL var_names
@@ -36,8 +37,7 @@ def parse_tfs_arg(tfs_arg: str | None, adata) -> list[str]:
       - '@/path/to/list.txt' => one TF per line (must exist)
     """
     if tfs_arg is None:
-        tfs = list(map(str, adata.var_names.tolist()))
-        return tfs
+        return list(map(str, adata.var_names.tolist()))
 
     s = str(tfs_arg).strip()
     if s.lower() == "all":
@@ -59,7 +59,7 @@ def parse_tfs_arg(tfs_arg: str | None, adata) -> list[str]:
     return tfs
 
 
-def parse_directions_arg(dirs_arg: str) -> list[str]:
+def parse_directions_arg(dirs_arg: str) -> List[str]:
     dirs = [d.strip().lower() for d in str(dirs_arg).split(",") if d.strip()]
     ok = {"up", "down"}
     bad = [d for d in dirs if d not in ok]
@@ -71,7 +71,7 @@ def parse_directions_arg(dirs_arg: str) -> list[str]:
 # -------------------------
 # Perturbation
 # -------------------------
-def perturb_tf_activity_inplace(X: np.ndarray, tf_idx: int, direction: str, mad_mult: float):
+def perturb_tf_activity_inplace(X: np.ndarray, tf_idx: int, direction: str, mad_mult: float) -> None:
     """
     X: dense array [n_cells, n_features] for ONE patient (will be copied by caller if needed)
     Perturb one TF feature by +/- mad_mult * MAD, then clip to [-1, 1].
@@ -79,7 +79,7 @@ def perturb_tf_activity_inplace(X: np.ndarray, tf_idx: int, direction: str, mad_
     """
     x = X[:, tf_idx].reshape(-1)
     mad = median_abs_deviation(x, scale=1.0, nan_policy="omit")
-    if not np.isfinite(mad) or mad <= 0:
+    if (not np.isfinite(mad)) or mad <= 0:
         # if MAD is 0 (constant), perturb does nothing
         return
 
@@ -110,7 +110,7 @@ def load_autoencoder(ae_path: str, input_dim: int, latent_dim: int, device):
 def load_cox_mil(model_path: str, input_dim: int, hidden_dim: int, dropout: float,
                  aggregator: str, topk: int, tau: float, device):
     _topk = int(topk) if (topk is not None and int(topk) > 0) else None
-    _tau  = float(tau) if (tau is not None and float(tau) > 0) else None
+    _tau = float(tau) if (tau is not None and float(tau) > 0) else None
 
     model = AttentionMIL(
         input_dim=input_dim,
@@ -140,11 +140,10 @@ def predict_risk_for_patient_X(X_patient: np.ndarray, ae, mil_model, device) -> 
     x_t = torch.from_numpy(X_patient.astype(np.float32, copy=False)).to(device)
 
     # AE encode -> latent
-    # Kristin 的 notebook/你的 AE code 通常會有 encode()；如果沒有，下面會 fallback 用 forward()
+    # Kristin 的 notebook/你的 AE code 通常會有 encode()；如果沒有，fallback 用 forward()
     if hasattr(ae, "encode"):
         z = ae.encode(x_t)
     else:
-        # fallback: assume forward returns (recon, latent) or latent
         out = ae(x_t)
         if isinstance(out, (tuple, list)) and len(out) >= 2:
             z = out[1]
@@ -186,7 +185,7 @@ def main():
                     help="TF spec: 'all' | 'TF1,TF2' | '@/path/to/tfs.txt'. Default: all")
     ap.add_argument("--directions", default="up,down")
 
-    # performance controls
+    # output size control
     ap.add_argument("--no_store_all", action="store_true",
                     help="If set, do NOT store baseline_risk_all / perturbed_risk_all (smaller CSV).")
     args = ap.parse_args()
@@ -196,9 +195,8 @@ def main():
 
     adata = sc.read_h5ad(args.input_h5ad)
 
-    # make sure X is dense in memory only when slicing per patient
+    # scale if needed
     if not args.assume_scaled:
-        # IMPORTANT: if sparse, scaling in-place is tricky; do it safely
         X = _to_dense(adata.X).astype(np.float32, copy=False)
         X = (X - 0.5) * 2.0
         adata.X = X
@@ -214,9 +212,11 @@ def main():
         args.topk = 0
         args.tau = 0.0
 
+    # load AE
     ae = load_autoencoder(args.ae_path, input_dim=input_dim, latent_dim=args.ae_latent_dim, device=device)
 
-    mil_paths = [p.strip() for p in args.mil_paths.split(",") if p.strip()]
+    # load MIL models (fold ensemble)
+    mil_paths = [p.strip() for p in str(args.mil_paths).split(",") if p.strip()]
     if len(mil_paths) == 0:
         raise ValueError("Empty --mil_paths")
 
@@ -238,7 +238,7 @@ def main():
     print(f"[INFO] TFs={len(tfs)} directions={directions} mad_mult={args.mad_mult}")
 
     # precompute tf indices for speed
-    tf2idx = {tf: int(adata.var_names.get_loc(tf)) for tf in tfs}
+    tf2idx: Dict[str, int] = {tf: int(adata.var_names.get_loc(tf)) for tf in tfs}
 
     rows = []
     for pid in tqdm(patients, desc="patients"):
