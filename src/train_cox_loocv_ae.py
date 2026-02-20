@@ -61,11 +61,37 @@ class CoxPHLoss(nn.Module):
 
 @torch.no_grad()
 def predict_risk(model, bag, device):
+    risk, _ = predict_risk_with_attn_stats(model, bag, device, return_attention_stats=False)
+    return risk
+
+
+@torch.no_grad()
+def predict_risk_with_attn_stats(model, bag, device, return_attention_stats=False):
     model.eval()
     b = bag.to(device)
-    out = model([b])
+    out = model([b], return_attention=bool(return_attention_stats))
     r = out["risk"].squeeze(0)  # scalar
-    return float(r.item())
+    risk = float(r.item())
+
+    if not return_attention_stats:
+        return risk, None
+
+    attn_list = out.get("attn", None)
+    if (attn_list is None) or (len(attn_list) == 0) or (attn_list[0] is None):
+        return risk, None
+
+    w = attn_list[0].detach().cpu().numpy().reshape(-1)
+    if w.size == 0:
+        return risk, None
+
+    stats = {
+        "attn_var": float(np.var(w)),
+        "attn_min": float(np.min(w)),
+        "attn_max": float(np.max(w)),
+        "attn_sum": float(np.sum(w)),
+        "attn_n": int(w.size),
+    }
+    return risk, stats
 
 
 def c_index(time, event, risk):
@@ -349,7 +375,30 @@ def main():
                 drop_inconsistent=args.drop_inconsistent,
             )
             bag, t, e, pid = test_ds[0]
-            r = predict_risk(model, bag, device)
+            want_attn = (args.aggregator == "attention")
+            r, attn_stats = predict_risk_with_attn_stats(
+                model, bag, device, return_attention_stats=want_attn
+            )
+            if want_attn:
+                if attn_stats is not None:
+                    print(
+                        f"[DEBUG][LOOCV fold={i}] pid={pid} "
+                        f"attn_var={attn_stats['attn_var']:.8f} "
+                        f"attn_min={attn_stats['attn_min']:.6f} "
+                        f"attn_max={attn_stats['attn_max']:.6f} "
+                        f"attn_sum={attn_stats['attn_sum']:.6f} "
+                        f"n={attn_stats['attn_n']} risk={r:.6f}"
+                    )
+                else:
+                    print(
+                        f"[DEBUG][LOOCV fold={i}] pid={pid} "
+                        f"attn unavailable risk={r:.6f}"
+                    )
+            else:
+                print(
+                    f"[DEBUG][LOOCV fold={i}] pid={pid} "
+                    f"aggregator={args.aggregator} (no attention weights) risk={r:.6f}"
+                )
             risks.append(r)
 
         risks = np.array(risks, float)
@@ -412,7 +461,30 @@ def main():
                     drop_inconsistent=args.drop_inconsistent,
                 )
                 bag, t, e, _ = test_ds[0]
-                r = predict_risk(model, bag, device)
+                want_attn = (args.aggregator == "attention")
+                r, attn_stats = predict_risk_with_attn_stats(
+                    model, bag, device, return_attention_stats=want_attn
+                )
+                if want_attn:
+                    if attn_stats is not None:
+                        print(
+                            f"[DEBUG][kfold fold={fold}] pid={pid} "
+                            f"attn_var={attn_stats['attn_var']:.8f} "
+                            f"attn_min={attn_stats['attn_min']:.6f} "
+                            f"attn_max={attn_stats['attn_max']:.6f} "
+                            f"attn_sum={attn_stats['attn_sum']:.6f} "
+                            f"n={attn_stats['attn_n']} risk={r:.6f}"
+                        )
+                    else:
+                        print(
+                            f"[DEBUG][kfold fold={fold}] pid={pid} "
+                            f"attn unavailable risk={r:.6f}"
+                        )
+                else:
+                    print(
+                        f"[DEBUG][kfold fold={fold}] pid={pid} "
+                        f"aggregator={args.aggregator} (no attention weights) risk={r:.6f}"
+                    )
 
                 idx = np.where(patients == pid)[0][0]
                 risks[idx] = r
