@@ -12,6 +12,8 @@ from lifelines.utils import concordance_index
 from src.MIL import AttentionMIL
 from src.Autoencoder import Autoencoder
 
+DAYS_PER_MONTH = 30.44
+
 
 # -------------------------
 # utils
@@ -148,23 +150,52 @@ def main():
 
     df = pd.DataFrame(rows)
 
-    # survival time
-    df["event"] = (df["relapse_y_n"] == "Yes").astype(int)
+    # survival time/event (robust yes/no normalization)
+    relapse_s = df["relapse_y_n"].astype(str).str.strip().str.upper()
+    event_map = {
+        "YES": 1, "Y": 1, "TRUE": 1, "T": 1, "1": 1,
+        "NO": 0, "N": 0, "FALSE": 0, "F": 0, "0": 0,
+    }
+    df["event"] = relapse_s.map(event_map)
+
+    df["time_to_relapse_days"] = pd.to_numeric(df["time_to_relapse_days"], errors="coerce")
+    df["follow_up_duration_months"] = pd.to_numeric(df["follow_up_duration_months"], errors="coerce")
+    df["risk"] = pd.to_numeric(df["risk"], errors="coerce")
+
     df["time"] = np.where(
         df["event"] == 1,
         df["time_to_relapse_days"],
-        df["follow_up_duration_months"] * 30
+        df["follow_up_duration_months"] * DAYS_PER_MONTH
     )
 
+    # keep only valid rows for correlation / c-index
+    valid_mask = (
+        df["time"].notna()
+        & np.isfinite(df["time"].to_numpy(dtype=float))
+        & df["risk"].notna()
+        & np.isfinite(df["risk"].to_numpy(dtype=float))
+        & df["event"].notna()
+        & np.isfinite(df["event"].to_numpy(dtype=float))
+    )
+    n_before = len(df)
+    n_after = int(valid_mask.sum())
+    n_drop = n_before - n_after
+    if n_drop > 0:
+        print(f"[WARN] Dropping {n_drop}/{n_before} patients with NaN/invalid time-event-risk before metrics.")
+
+    df_eval = df.loc[valid_mask].copy()
+    if len(df_eval) < 2:
+        raise ValueError(f"Too few valid patients for evaluation after filtering: n={len(df_eval)}")
+
     # Spearman
-    rho, p = spearmanr(df["risk"], df["time"])
+    rho, p = spearmanr(df_eval["risk"], df_eval["time"])
     print("Spearman rho:", rho, "p:", p)
 
     # C-index
     cidx = concordance_index(
-        df["time"],
-        -df["risk"],   # higher risk = shorter survival
-        df["event"]
+        df_eval["time"],
+        -df_eval["risk"],   # higher risk = shorter survival
+        df_eval["event"]
     )
     print("C-index:", cidx)
 
