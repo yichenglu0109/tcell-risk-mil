@@ -43,8 +43,27 @@ def load_mil(path, latent_dim, hidden_dim, dropout, aggregator, topk, tau, devic
         p.requires_grad = False
     return model
 
+
+def parse_mil_paths(mil_path, mil_paths):
+    paths = []
+    if mil_path is not None and str(mil_path).strip():
+        paths.append(str(mil_path).strip())
+    if mil_paths is not None and str(mil_paths).strip():
+        paths.extend([p.strip() for p in str(mil_paths).split(",") if p.strip()])
+    # unique while preserving order
+    out = []
+    seen = set()
+    for p in paths:
+        if p not in seen:
+            out.append(p)
+            seen.add(p)
+    if len(out) == 0:
+        raise ValueError("Please provide --mil_path or --mil_paths.")
+    return out
+
+
 @torch.no_grad()
-def forward_with_attention(adata_p, ae, mil, device, assume_scaled=False):
+def forward_with_attention(adata_p, ae, mil_models, device, assume_scaled=False, attn_reduce="median"):
     X = _to_dense(adata_p.X).astype(np.float32)
     if not assume_scaled:
         X = (X - 0.5) * 2.0
@@ -56,14 +75,31 @@ def forward_with_attention(adata_p, ae, mil, device, assume_scaled=False):
     else:
         z = ae(x)
 
-    out = mil([z], return_attention=True)
-    risk = float(out["risk"].view(-1).item())
+    risks = []
+    attns = []
+    for mil in mil_models:
+        out = mil([z], return_attention=True)
+        risks.append(float(out["risk"].view(-1).item()))
 
-    attn_list = out.get("attn", None)
-    if (attn_list is None) or (len(attn_list) == 0) or (attn_list[0] is None):
-        raise RuntimeError("No attention returned. Make sure aggregator=attention and model supports return_attention.")
-    w = attn_list[0].detach().cpu().numpy().reshape(-1)  # [n_cells]
-    return risk, w
+        attn_list = out.get("attn", None)
+        if (attn_list is None) or (len(attn_list) == 0) or (attn_list[0] is None):
+            raise RuntimeError(
+                "No attention returned. Make sure aggregator=attention, topk=0, and model supports return_attention."
+            )
+        w = attn_list[0].detach().cpu().numpy().reshape(-1)  # [n_cells]
+        attns.append(w)
+
+    if len(attns) == 1:
+        w_ens = attns[0]
+    else:
+        A = np.vstack(attns)  # [n_models, n_cells]
+        if attn_reduce == "mean":
+            w_ens = A.mean(axis=0)
+        else:
+            w_ens = np.median(A, axis=0)
+
+    risk_ens = float(np.median(np.asarray(risks, dtype=float)))
+    return risk_ens, w_ens
 
 def main():
     ap = argparse.ArgumentParser()
@@ -71,12 +107,15 @@ def main():
     ap.add_argument("--ae_path", required=True)
     ap.add_argument("--ae_latent_dim", type=int, required=True)
 
-    ap.add_argument("--mil_path", required=True)
+    ap.add_argument("--mil_path", default=None, help="single MIL checkpoint path")
+    ap.add_argument("--mil_paths", default=None, help="comma-separated MIL checkpoint paths (ensemble)")
     ap.add_argument("--mil_hidden_dim", type=int, default=128)
     ap.add_argument("--mil_dropout", type=float, default=0.25)
     ap.add_argument("--aggregator", default="attention")
     ap.add_argument("--topk", type=int, default=0)
     ap.add_argument("--tau", type=float, default=0.0)
+    ap.add_argument("--attn_reduce", default="median", choices=["median", "mean"],
+                    help="How to combine per-model cell attention when using --mil_paths.")
 
     ap.add_argument("--patient_col", default="patient_id_std")
     ap.add_argument("--pid", default=None, help="single patient id to extract; if not set, run all patients")
@@ -102,9 +141,16 @@ def main():
 
     input_dim = int(adata.shape[1])
     ae = load_autoencoder(args.ae_path, input_dim=input_dim, latent_dim=args.ae_latent_dim, device=device)
-    mil = load_mil(args.mil_path, latent_dim=args.ae_latent_dim,
-                   hidden_dim=args.mil_hidden_dim, dropout=args.mil_dropout,
-                   aggregator=args.aggregator, topk=args.topk, tau=args.tau, device=device)
+    mil_ckpts = parse_mil_paths(args.mil_path, args.mil_paths)
+    if len(mil_ckpts) > 1 and int(args.topk) > 0:
+        raise ValueError("Ensemble attention requires --topk 0 so attention vectors align to original cells.")
+    mil_models = [
+        load_mil(p, latent_dim=args.ae_latent_dim,
+                 hidden_dim=args.mil_hidden_dim, dropout=args.mil_dropout,
+                 aggregator=args.aggregator, topk=args.topk, tau=args.tau, device=device)
+        for p in mil_ckpts
+    ]
+    print(f"[INFO] loaded MIL models: {len(mil_models)}")
 
     if args.pid is not None:
         pids = [str(args.pid)]
@@ -124,7 +170,10 @@ def main():
         if adata_p.n_obs == 0:
             continue
 
-        risk, w = forward_with_attention(adata_p, ae, mil, device, assume_scaled=args.assume_scaled)
+        risk, w = forward_with_attention(
+            adata_p, ae, mil_models, device,
+            assume_scaled=args.assume_scaled, attn_reduce=args.attn_reduce
+        )
 
         if args.cell_id_col in adata_p.obs.columns:
             cell_ids = adata_p.obs[args.cell_id_col].astype(str).to_numpy()
