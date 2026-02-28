@@ -27,9 +27,9 @@ class CoxPHLoss(nn.Module):
         # time: [B]
         # event: [B] float 0/1
 
-        # ===== ✅ 加在這裡（第一行邏輯）=====
+        # if no events, return 0 loss (since no ordering constraints)
         if (event > 0).sum() == 0:
-            # 沒有任何 event，回傳「可 backprop 的 0」
+            # no events present, return 0 loss (since no ordering constraints)
             return risk.sum() * 0.0
         # ===================================
         device = risk.device
@@ -195,7 +195,7 @@ def main():
     ap.add_argument("--k", type=int, default=5)
     args = ap.parse_args()
 
-    # ✅ guard: pseudobulk 不該用 topk/tau（沒意義）
+    # Check and adjust arguments for specific aggregators
     if args.aggregator in ("mean", "q90"):
         if args.topk != 0 or args.tau != 0.0:
             print("[WARN] mean/q90 ignores topk/tau; forcing topk=0, tau=0.0")
@@ -314,7 +314,7 @@ def main():
                 weight_decay=args.weight_decay,
                 batch_size=args.batch_size,
                 patience=args.patience,
-                seed=args.seed + fold,  # 每 fold seed 稍微錯開（可選）
+                seed=args.seed + fold,  # different seed per fold
                 aggregator=args.aggregator,
                 topk=args.topk,
                 tau=args.tau,

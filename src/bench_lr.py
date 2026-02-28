@@ -37,7 +37,7 @@ def _to_jsonable(x):
     return x
 
 def append_jsonl(path: str, record: dict):
-    # rf.py 是 os.makedirs(os.path.dirname(path)), 但若 path 沒資料夾會炸
+    # rf.py is os.makedirs(os.path.dirname(path))
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
@@ -54,7 +54,7 @@ def build_patient_matrix(
     sample_source_col: str = "Sample_source",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
 
-    # 兼容 Dataset.py 若沒有 cache_bags 參數
+    # Check and adjust arguments for specific aggregators
     try:
         ds = PatientBagDataset(
             adata=adata,
@@ -65,7 +65,7 @@ def build_patient_matrix(
             drop_missing=drop_missing,
             use_sample_source=use_sample_source,
             sample_source_col=sample_source_col,
-            cache_bags=False,   # 防止 init 就 materialize 全部 bags
+            cache_bags=False,   # mean pooling is fast, no need to cache
         )
     except TypeError:
         ds = PatientBagDataset(

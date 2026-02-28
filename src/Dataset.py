@@ -244,7 +244,7 @@ class PatientBagDataset(Dataset):
                     patient_data = patient_data.toarray()
                 self.patient_bags[patient] = patient_data
             else:
-                # lazy mode: 不在 init 先把 bag materialize 成 dense
+                # lazy mode: only store indices, materialize bag in __getitem__
                 self.patient_bags[patient] = None
 
             # patient-level label
@@ -377,7 +377,7 @@ def build_patient_survival_table(
         "N/A": np.nan, "NA": np.nan, "NAN": np.nan, "NONE": np.nan, "": np.nan,
     })
 
-    r = pd.to_numeric(r, errors="coerce")  # 變成 float (0/1/NaN)
+    r = pd.to_numeric(r, errors="coerce")  # any non-mapped string becomes NaN
 
     ttr = byp[ttr_col].astype(float)
     fu_m = byp[fu_col].astype(float)
@@ -387,7 +387,7 @@ def build_patient_survival_table(
     event = np.where(r == 1.0, 1,
             np.where(r == 0.0, 0, np.nan)).astype(float)
 
-    # time_days: event==1 用 ttr；event==0 用 fu_days；event==NaN -> NaN
+    # time days: if event==1 use ttr, if event==0 use fu_days, else NaN
     time_days = np.where(event == 1.0, ttr.to_numpy(),
                 np.where(event == 0.0, fu_days.to_numpy(), np.nan)).astype(float)
 

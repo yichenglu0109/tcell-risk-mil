@@ -16,8 +16,8 @@ def append_jsonl(path: str, record: dict):
 
 def log_cv_run(jsonl_path: str, params: dict, cv_results: dict, extra: Optional[dict] = None):
     """
-    params: 你這次 run 的超參數/設定
-    cv_results: cross_validation_mil 回傳的 dict
+    params: dict of hyperparameters (e.g. {"aggregator": "mean", "topk": 5, "tau": 0.0})
+    cv_results: cross_validation_mil 
     """
     overall = cv_results.get("overall_metrics", {}) or {}
     record = {

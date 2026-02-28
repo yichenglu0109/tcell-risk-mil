@@ -207,9 +207,9 @@ def cross_validation_mil(
             task_type="classification",
             label_col=label_col,
             label_map=label_map,
-            drop_missing=False,          # fold 裡你已經決定 train_pids/test_pids 了
-            use_sample_source=False,     # 你目前在 MIL forward 其實沒用 sample_source（都註解掉）
-            cache_bags=False,           # 不要在 Dataset init 就把所有病人 bag materialize 成 dense（可能很大），改成 lazy 模式在 __getitem__ 時才 materialize（如果 cache_bags=False）
+            drop_missing=False,          
+            use_sample_source=False,     
+            cache_bags=False,            
         )
         test_dataset = PatientBagDataset(
             test_adata,
@@ -391,7 +391,7 @@ def cross_validation_mil(
                         train_trues.extend(batch_labels.cpu().numpy().tolist())
 
                 bal_acc = balanced_accuracy_score(train_trues, train_preds)
-                if bal_acc > best_bal_acc + 1e-4:   # 小 margin 防抖
+                if bal_acc > best_bal_acc + 1e-4:   # only save if there's a meaningful improvement
                     best_bal_acc = bal_acc
                     torch.save(model.state_dict(), os.path.join(fold_save_path, "best_model.pth"))
                 model.train()
