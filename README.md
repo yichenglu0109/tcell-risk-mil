@@ -46,8 +46,8 @@ For survival scripts:
 - `time_to_relapse_days`: time-to-event in days
 - `follow_up_duration_months`: fallback follow-up for censored patients
 
-Legacy (original tcellMIL classification workflow):
-- `Response_3m` (or another classification label column)
+For classification scripts:
+- A binary label column passed via `--label_col` (for example `relapse_y_n`)
 
 Custom endpoint naming is supported.
 If your event column has a different name, pass it with `--relapse_col` in survival scripts.
@@ -117,7 +117,7 @@ results = run_pipeline_loocv(
     latent_dim=64,
     num_epochs_ae=200,
     num_epochs=50,
-    label_col="Response_3m",
+    label_col="relapse_y_n",
     cv="loocv"
 )
 ```
