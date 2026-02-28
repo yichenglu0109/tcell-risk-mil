@@ -57,7 +57,7 @@ def build_patient_matrix(
         drop_missing=drop_missing,
         use_sample_source=use_sample_source,
         sample_source_col=sample_source_col,
-        cache_bags=False,   # 防止 init 就 materialize 全部 bags
+        cache_bags=False,   # we will pool on the fly, no need to store all bags in memory
     )
 
     X_list, y_list, pid_list = [], [], []

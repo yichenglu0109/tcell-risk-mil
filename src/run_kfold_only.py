@@ -1,7 +1,7 @@
 # src/run_kfold_only.py
 import scanpy as sc
 from src.train import cross_validation_mil
-from src.logging_utils import log_cv_run   # 你把上面那段放進 src/logging_utils.py
+from src.logging_utils import log_cv_run   # for logging CV results to a JSONL file for easy tracking and analysis
 import os
 
 def run_kfold(
@@ -42,7 +42,7 @@ def run_kfold(
         store_attention=False,
     )
 
-    # ✅ append to jsonl
+    # append to jsonl
     if append_log and results_jsonl is not None:
         params = dict(
             input_file=input_file,

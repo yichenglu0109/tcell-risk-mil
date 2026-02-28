@@ -11,12 +11,10 @@ from scipy.stats import median_abs_deviation
 from typing import Optional, List, Dict
 
 from src.MIL import AttentionMIL
-from src.Autoencoder import Autoencoder  # 如果你 repo 裡 class 名稱不同，改這行
+from src.Autoencoder import Autoencoder  
 
 
-# -------------------------
 # Utils
-# -------------------------
 def _to_dense(x):
     """anndata.X could be np.ndarray or scipy sparse; return dense np.ndarray."""
     try:
@@ -68,9 +66,7 @@ def parse_directions_arg(dirs_arg: str) -> List[str]:
     return dirs
 
 
-# -------------------------
 # Perturbation
-# -------------------------
 def perturb_tf_activity_inplace(X: np.ndarray, tf_idx: int, direction: str, mad_mult: float) -> None:
     """
     X: dense array [n_cells, n_features] for ONE patient (will be copied by caller if needed)
@@ -93,9 +89,7 @@ def perturb_tf_activity_inplace(X: np.ndarray, tf_idx: int, direction: str, mad_
     X[:, tf_idx] = x_new
 
 
-# -------------------------
 # Loaders
-# -------------------------
 def load_autoencoder(ae_path: str, input_dim: int, latent_dim: int, device):
     ae = Autoencoder(input_dim=input_dim, latent_dim=latent_dim)
     state = torch.load(ae_path, map_location=device)
@@ -114,7 +108,7 @@ def load_cox_mil(model_path: str, input_dim: int, hidden_dim: int, dropout: floa
 
     model = AttentionMIL(
         input_dim=input_dim,
-        num_classes=2,           # Cox 用 AttentionMIL 架構，但 forward 取 out["risk"]
+        num_classes=2,           # we only care about risk score, not actual class probs; set num_classes=2 for compatibility with CoxMIL code
         hidden_dim=hidden_dim,
         dropout=dropout,
         sample_source_dim=None,
@@ -140,7 +134,7 @@ def predict_risk_for_patient_X(X_patient: np.ndarray, ae, mil_model, device) -> 
     x_t = torch.from_numpy(X_patient.astype(np.float32, copy=False)).to(device)
 
     # AE encode -> latent
-    # Kristin 的 notebook/你的 AE code 通常會有 encode()；如果沒有，fallback 用 forward()
+    # Handle both cases where AE has a separate encode() method or is just a forward() model that returns latent as output.
     if hasattr(ae, "encode"):
         z = ae.encode(x_t)
     else:

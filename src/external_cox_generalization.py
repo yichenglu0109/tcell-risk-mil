@@ -15,9 +15,7 @@ from src.Autoencoder import Autoencoder
 DAYS_PER_MONTH = 30.44
 
 
-# -------------------------
 # utils
-# -------------------------
 def _to_dense(x):
     try:
         import scipy.sparse as sp
@@ -74,9 +72,7 @@ def predict_risk(X_patient, ae, mil_models, device):
     return float(np.median(risks))
 
 
-# -------------------------
 # main
-# -------------------------
 def main():
     ap = argparse.ArgumentParser()
 

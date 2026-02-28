@@ -28,7 +28,7 @@ def log_cv_run(jsonl_path: str, params: dict, cv_results: dict, extra: Optional[
         "cv": cv_results.get("cv"),
         "k": cv_results.get("k"),
     }
-    # 讓 label_map / class_counts 這些也可追溯（重要！）
+    # optional: label_map (e.g. {0: "low risk", 1: "high risk"}) for interpretability when looking at logs; not needed for analysis since we mainly care about metrics
     if "label_map" in cv_results:
         record["label_map"] = cv_results["label_map"]
     if extra:

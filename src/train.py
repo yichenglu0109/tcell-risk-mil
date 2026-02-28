@@ -22,7 +22,7 @@ def find_best_threshold(y_true, y_prob, metric="balanced_acc"):
     y_true = np.asarray(y_true).astype(int)
     y_prob = np.asarray(y_prob).astype(float)
 
-    # candidate thresholds：用 unique prob 會比較精準；也可以用 linspace(0,1,101)
+    # candidate thresholds：unique probs + some fixed points
     ths = np.unique(y_prob)
     if ths.size > 2000:
         ths = np.linspace(0, 1, 201)
@@ -76,19 +76,17 @@ def cross_validation_mil(
     # create full dataset (for patient list + stable label_map)
     full_dataset = PatientBagDataset(adata, label_col=label_col)
 
-    # ---- 替換原本的 label_map 獲取方式 ----
-    # 強制指定映射，不受數據讀取順序影響
-    # 這裡的 key 必須對應你 adata.obs[label_col] 裡的原始字串 (如 'No', 'Yes')
-    # label_map = {"No": 0, "Yes": 1} 
-    # print("[INFO] Fixed Global label_map:", label_map)
+    # ---- FIX: freeze label_map globally so folds are consistent ----
+    # label_map = full_dataset._label_to_int
+    # print("[INFO] Global label_map:", label_map)
 
-    # 修改後的簡潔邏輯
+    # create a new label_map for the current fold based on the unique values in adata.obs[label_col] (after dropping NaN)
     raw_labels = adata.obs[label_col].dropna().unique()
     label_map = {}
 
+    # map common positive/negative labels to 1/0 (customize this based on your dataset)
     for lbl in raw_labels:
         s = str(lbl).strip()
-        # 支援原有的 Yes/No 以及新的 CD19pos/neg
         if s in ['Yes', 'CD19pos', '1', '1.0', 'OR']:
             label_map[s] = 1
         elif s in ['No', 'CD19neg', '0', '0.0', 'NR']:
@@ -259,7 +257,7 @@ def cross_validation_mil(
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode="min",
-            patience=5,     # loss 5 個 epoch 沒改善就降 LR
+            patience=5,      
             factor=0.5,
             min_lr=1e-6,
         )
@@ -415,7 +413,6 @@ def cross_validation_mil(
         model.eval()
 
         # ===== A) tune threshold on TRAIN patients (after loading best_model) =====
-        # ===== A) (Optional) tune threshold on TRAIN patients (after loading best_model) =====
         best_th = 0.5
         best_th_score = None
 
@@ -442,7 +439,6 @@ def cross_validation_mil(
 
             best_th, best_th_score = find_best_threshold(train_true, train_prob, metric="balanced_acc")
             print(f"[Fold {fold}] tuned_threshold={best_th:.4f} (train balanced_acc={best_th_score:.4f})")
-        # ========================================================================
         # ========================================================================
 
         # ---- evaluate on test patients (OOF) ----
@@ -477,7 +473,7 @@ def cross_validation_mil(
                     if tune_threshold:
                         pred_label = 1 if (pos_prob >= best_th) else 0
                     else:
-                        pred_label = int(np.argmax(probs_np))   # ✅ 原本的 argmax 行為
+                        pred_label = int(np.argmax(probs_np))   
                 else:
                     pred_label = int(np.argmax(probs_np))
                 # ===============================================
@@ -485,7 +481,7 @@ def cross_validation_mil(
                 if want_attn and ("attn" in out):
                     attn_weights = out["attn"]
 
-                    # (optional) debug print: OK 保留
+                    # (optional) debug print: check if attn_weights[0] is None or has reasonable values
                     w0 = attn_weights[0]
                     if w0 is None:
                         print(f"[DEBUG] patient {patient_id}: attn is None")
@@ -497,7 +493,7 @@ def cross_validation_mil(
                             f"sum={w0_np.sum():.6f}, n={w0_np.size}"
                         )
 
-                    # ✅ only store if requested
+                    # only store if requested
                     if store_attention:
                         cv_results["attention_weights"][patient_id] = [
                             (w.detach().cpu().numpy() if w is not None else None) for w in attn_weights

@@ -3,13 +3,13 @@ import os
 import scanpy as sc
 
 from src.logging_utils import log_cv_run
-from train_kfold_with_val import kfold_patient_cv_with_val  # 你把核心函數放這（下面我也給你）
+from train_kfold_with_val import kfold_patient_cv_with_val  
 
 
 def run_kfold_with_val(
     input_file,
     output_dir,
-    input_dim=None,          # 可選：不給就用 adata.X.shape[1]
+    input_dim=None,          
     hidden_dim=128,
     num_epochs=60,
     label_col="relapse_y_n",
@@ -49,7 +49,7 @@ def run_kfold_with_val(
         select_metric=select_metric,
     )
 
-    # ✅ append to jsonl (same style as run_kfold_only)
+    # append to jsonl (same style as run_kfold_only)
     if append_log and (results_jsonl is not None):
         params = dict(
             input_file=input_file,
