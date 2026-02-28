@@ -243,7 +243,7 @@ def predict_one_patient(model, test_adata, device, use_sample_source=True, retur
 
         y_days = float(label.item())
 
-        # forward (只做一次，而且保留 sample_source)
+        # forward pass with log-time transform
         out = model(
             [bag],
             sample_source=one_hot.unsqueeze(0) if one_hot is not None else None,
