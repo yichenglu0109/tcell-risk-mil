@@ -12,3 +12,4 @@ runs/
 .env
 .venv/
 sanity_*.py
+train_tcellMIL.ipynb

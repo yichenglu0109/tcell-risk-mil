@@ -1,10 +1,10 @@
 # tcell-risk-mil
 
-tcell-risk-mil is a patient-level learning framework for single-cell CAR-T data.  
+tcell-risk-mil is a patient-level learning framework for single-cell CAR-T data, focused on relapse risk and survival modeling.  
 It supports:
 - Attention-based multiple instance learning (MIL)
 - Optional autoencoder (AE) feature compression
-- Survival modeling (Cox objective) and binary classification pipelines
+- Survival modeling (Cox objective)
 
 This project is derived from the original tcellMIL codebase and extends it for risk/survival-focused workflows.
 
@@ -45,8 +45,8 @@ For survival scripts:
 - `time_to_relapse_days`: time-to-event in days
 - `follow_up_duration_months`: fallback follow-up for censored patients
 
-For classification scripts:
-- `Response_3m` (or another label column passed via `label_col`)
+Legacy (original tcellMIL classification workflow):
+- `Response_3m` (or another classification label column)
 
 ## Quick Start
 
@@ -100,9 +100,9 @@ python src/train_survival_baselines.py \
 - `results_cox/run_YYYYMMDD_HHMMSS/cox_<loocv|kfoldK>_results.pkl`
 - `results_cox/run_YYYYMMDD_HHMMSS/cox_risk_<loocv|kfoldK>.csv`
 
-## Binary Classification Pipeline (Python API)
+## Legacy Classification Pipeline (Optional)
 
-`src/train.py` exposes `run_pipeline_loocv(...)` for end-to-end AE + MIL classification in Python:
+`src/train.py` exposes `run_pipeline_loocv(...)` for the original AE + MIL classification workflow:
 
 ```python
 from src.train import run_pipeline_loocv
