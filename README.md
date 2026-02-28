@@ -5,6 +5,7 @@ It supports:
 - Attention-based multiple instance learning (MIL)
 - Optional autoencoder (AE) feature compression
 - Survival modeling (Cox objective)
+- Binary classification pipelines
 
 This project is derived from the original tcellMIL codebase and extends it for risk/survival-focused workflows.
 
@@ -41,12 +42,15 @@ Common `adata.obs` columns:
 - `patient_id`: patient identifier
 
 For survival scripts:
-- `relapse_y_n`: event indicator (0/1 or compatible values)
+- An event indicator column passed via `--relapse_col` (default: `relapse_y_n`; 0/1 or compatible Yes/No values)
 - `time_to_relapse_days`: time-to-event in days
 - `follow_up_duration_months`: fallback follow-up for censored patients
 
 Legacy (original tcellMIL classification workflow):
 - `Response_3m` (or another classification label column)
+
+Custom endpoint naming is supported.
+If your event column has a different name, pass it with `--relapse_col` in survival scripts.
 
 ## Quick Start
 
@@ -100,9 +104,9 @@ python src/train_survival_baselines.py \
 - `results_cox/run_YYYYMMDD_HHMMSS/cox_<loocv|kfoldK>_results.pkl`
 - `results_cox/run_YYYYMMDD_HHMMSS/cox_risk_<loocv|kfoldK>.csv`
 
-## Legacy Classification Pipeline (Optional)
+## Classification Pipeline (Optional)
 
-`src/train.py` exposes `run_pipeline_loocv(...)` for the original AE + MIL classification workflow:
+`src/train.py` exposes `run_pipeline_loocv(...)` for AE + MIL classification:
 
 ```python
 from src.train import run_pipeline_loocv
