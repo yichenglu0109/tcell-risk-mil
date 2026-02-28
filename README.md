@@ -1,10 +1,12 @@
-# tcellMIL
+# tcell-risk-mil
 
-tcellMIL is a patient-level learning framework for single-cell CAR-T data.  
+tcell-risk-mil is a patient-level learning framework for single-cell CAR-T data.  
 It supports:
 - Attention-based multiple instance learning (MIL)
 - Optional autoencoder (AE) feature compression
 - Survival modeling (Cox objective) and binary classification pipelines
+
+This project is derived from the original tcellMIL codebase and extends it for risk/survival-focused workflows.
 
 ## Repository Layout
 
@@ -123,6 +125,10 @@ results = run_pipeline_loocv(
 - For `mean`/`q90` aggregators, `topk` and `tau` are ignored by design.
 
 ## Citation
+
+If you use this repository, please cite both:
+- The original tcellMIL work (base framework)
+- This repository (`tcell-risk-mil`) for the risk/survival extensions
 
 Tsui K. C. Y.*, Rodrigues K. B.*, Zhan X.*, Chen Y, Mo K. C., Mackall C. L., Miklos D. B., Gevaert O., Good Z. (2025).  
 Patient-level prediction from single-cell data using attention-based multiple instance learning with regulatory priors.  
